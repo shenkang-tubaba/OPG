@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
@@ -129,12 +129,57 @@ function parseArgs(argv) {
   return { moduleName, module, bump, options };
 }
 
-function bumpVersion(module, bump) {
-  const args = ['version', bump, '--no-git-tag-version'];
-  if (module.workspace) {
-    args.push('--workspace', module.workspace);
+function bumpVersion(moduleName, module, bump) {
+  const packageFile = resolve(process.cwd(), module.packagePath);
+  const packageJson = JSON.parse(readFileSync(packageFile, 'utf8'));
+  const nextVersion = isExplicitVersion(bump) ? bump : resolveNextVersion(String(packageJson.version || ''), bump);
+  packageJson.version = nextVersion;
+  if (moduleName === 'cli') {
+    packageJson.dependencies = packageJson.dependencies || {};
+    packageJson.dependencies['opg-sdk'] = readPackageVersion(modules.sdk.packagePath);
   }
-  run('npm', args);
+  writeJson(packageFile, packageJson);
+
+  const lockFile = resolve(process.cwd(), 'package-lock.json');
+  if (existsSync(lockFile)) {
+    const lock = JSON.parse(readFileSync(lockFile, 'utf8'));
+    const workspaceEntry = module.workspace ? lock.packages?.[module.workspace] : lock.packages?.[''];
+    if (!workspaceEntry) throw new Error(`package-lock.json is missing workspace entry ${module.workspace || '<root>'}`);
+    workspaceEntry.version = nextVersion;
+    if (moduleName === 'cli') {
+      workspaceEntry.dependencies = workspaceEntry.dependencies || {};
+      workspaceEntry.dependencies['opg-sdk'] = packageJson.dependencies['opg-sdk'];
+    }
+    writeJson(lockFile, lock);
+  }
+}
+
+function resolveNextVersion(current, bump) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(current);
+  if (!match) throw new Error(`Cannot bump invalid semantic version: ${current}`);
+  let major = Number(match[1]);
+  let minor = Number(match[2]);
+  let patch = Number(match[3]);
+  const prerelease = match[4] || '';
+  if (bump === 'major') return `${major + 1}.0.0`;
+  if (bump === 'minor') return `${major}.${minor + 1}.0`;
+  if (bump === 'patch') return `${major}.${minor}.${patch + 1}`;
+  if (bump === 'premajor') return `${major + 1}.0.0-0`;
+  if (bump === 'preminor') return `${major}.${minor + 1}.0-0`;
+  if (bump === 'prepatch') return `${major}.${minor}.${patch + 1}-0`;
+  if (bump === 'prerelease') {
+    if (!prerelease) return `${major}.${minor}.${patch + 1}-0`;
+    const parts = prerelease.split('.');
+    const last = parts.at(-1) || '';
+    if (/^\d+$/.test(last)) parts[parts.length - 1] = String(Number(last) + 1);
+    else parts.push('0');
+    return `${major}.${minor}.${patch}-${parts.join('.')}`;
+  }
+  throw new Error(`Unsupported version bump: ${bump}`);
+}
+
+function writeJson(filePath, value) {
+  writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function runVerification(module, skipVerify) {
@@ -159,7 +204,7 @@ try {
 
   const before = readPackageVersion(module.packagePath);
   console.log(`Preparing ${module.label} release from ${before} with bump "${bump}".`);
-  bumpVersion(module, bump);
+  bumpVersion(moduleName, module, bump);
   const after = readPackageVersion(module.packagePath);
   runVerification(module, options.skipVerify);
 
