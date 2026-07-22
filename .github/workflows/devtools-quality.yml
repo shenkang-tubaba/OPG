@@ -1,0 +1,44 @@
+name: Developer Tools Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify synchronized developer surface
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [[ -n "${BASE_REF}" ]]; then
+            npm run developer:surface:verify -- --base "origin/${BASE_REF}"
+          else
+            npm run developer:surface:verify
+          fi
+
+      - run: npm run gateway:build
+      - run: npm run sdk:test
+      - run: npm run cli:test
+
+      - name: Verify publish contents
+        run: |
+          cd packages/sdk && npm pack --dry-run
+          cd ../cli && npm pack --dry-run

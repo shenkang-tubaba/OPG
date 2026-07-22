@@ -18,12 +18,18 @@
     "cli:build": "npm --prefix packages/cli run build",
     "release:bump": "node scripts/release-module.mjs",
     "cli:verify": "node scripts/verify-opg-cli.mjs",
-    "sdk:db:smoke": "node scripts/verify-opg-database-sdk.mjs"
+    "sdk:db:smoke": "node scripts/verify-opg-database-sdk.mjs",
+    "developer:surface:verify": "node scripts/verify-developer-surface.mjs",
+    "sdk:test": "npm --prefix packages/sdk test",
+    "cli:test": "npm --prefix packages/cli test",
+    "devtools:verify": "npm run gateway:build && npm run sdk:test && npm run cli:test && npm run developer:surface:verify"
   },
   "engines": {
     "node": ">=22"
   },
   "overrides": {
-    "multer": "2.2.0"
+    "multer": "2.2.0",
+    "socket.io-parser": "4.2.6",
+    "ws": "8.21.0"
   }
 }

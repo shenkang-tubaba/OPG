@@ -38,7 +38,7 @@ const modules = {
     workspace: 'packages/sdk',
     tagPrefix: 'opg-sdk',
     commitScope: 'sdk',
-    verify: ['npm run sdk:build'],
+    verify: ['npm run sdk:test', 'npm run developer:surface:verify', 'cd packages/sdk && npm pack --dry-run'],
     release: 'npm package: opg-sdk',
   },
   cli: {
@@ -47,7 +47,7 @@ const modules = {
     workspace: 'packages/cli',
     tagPrefix: 'opg-cli',
     commitScope: 'cli',
-    verify: ['npm run cli:build'],
+    verify: ['npm run cli:test', 'npm run developer:surface:verify', 'cd packages/cli && npm pack --dry-run'],
     release: 'npm package: @jamba/opg-cli',
   },
 };
@@ -173,6 +173,10 @@ try {
   console.log(`  git commit -m "chore(${module.commitScope}): release ${after}"`);
   console.log(`  git tag ${module.tagPrefix}/v${after}`);
   console.log(`  git push origin main ${module.tagPrefix}/v${after}`);
+  if (moduleName === 'sdk' || moduleName === 'cli') {
+    console.log(`  # The pushed tag triggers .github/workflows/npm-release.yml for ${module.release}.`);
+    console.log(`  npm view ${moduleName === 'sdk' ? 'opg-sdk' : '@jamba/opg-cli'}@${after} version --registry=https://registry.npmjs.org/`);
+  }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

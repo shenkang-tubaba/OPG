@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "description": "Required backend, SDK, CLI, and MCP exposure tokens for developer-facing OPG capabilities.",
+  "capabilities": [
+    {
+      "id": "forms_logic_and_actions",
+      "checks": [
+        { "file": "services/gateway/src/modules/app-forms/app-forms-platform.controller.ts", "tokens": ["logic-rules", "actions/:action_id"] },
+        { "file": "packages/sdk/src/index.ts", "tokens": ["createLogicRule", "updateLogicRule", "deleteLogicRule", "createAction", "updateAction", "deleteAction"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["logic-create", "action-create", "opg_platform_app_form_logic_rule_mutate", "opg_platform_app_form_action_mutate"] }
+      ]
+    },
+    {
+      "id": "acquisition_control_plane",
+      "checks": [
+        { "file": "services/gateway/src/modules/acquisition/acquisition-admin.controller.ts", "tokens": ["source-options", "getSummary", "listUserSources"] },
+        { "file": "packages/sdk/src/index.ts", "tokens": ["createSourceOption", "updateSourceOption", "deleteSourceOption", "acquisition/summary", "acquisition/users"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["source-create", "source-update", "source-delete", "opg_platform_app_acquisition_report"] }
+      ]
+    },
+    {
+      "id": "schema_policy",
+      "checks": [
+        { "file": "services/gateway/src/modules/app-schema/app-schema-platform.controller.ts", "tokens": ["schema/tables/:table/policies"] },
+        { "file": "packages/sdk/src/index.ts", "tokens": ["upsertPolicy"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["schema policy upsert", "opg_schema_policy_upsert"] }
+      ]
+    },
+    {
+      "id": "portable_ai_voices",
+      "checks": [
+        { "file": "services/gateway/src/modules/ai-chat/ai-voices.controller.ts", "tokens": ["cloneVoice", "listVoices", "deleteVoice"] },
+        { "file": "services/gateway/src/modules/ai-chat/ai-voices-admin.controller.ts", "tokens": ["migration-jobs", "retry-clone", "activate-mapping"] },
+        { "file": "packages/sdk/src/index.ts", "tokens": ["voices:", "createMigrationJob", "retryClone", "activateMapping"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["opg_platform_ai_voices_list", "opg_platform_ai_voice_operation"] }
+      ]
+    },
+    {
+      "id": "points_and_user_lifecycle",
+      "checks": [
+        { "file": "services/gateway/src/modules/platform-admin/platform-admin.controller.ts", "tokens": ["ai/points/grant", "users/:user_id/deactivate", "users/:user_id/restore", "unlink-phone", "unlink-email"] },
+        { "file": "packages/sdk/src/index.ts", "tokens": ["grantPoints", "deactivate", "unlinkPhone", "unlinkEmail"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["opg_platform_app_points_grant", "opg_platform_app_user_lifecycle"] }
+      ]
+    },
+    {
+      "id": "sms_observability_and_test",
+      "checks": [
+        { "file": "services/gateway/src/modules/platform-admin/platform-admin.controller.ts", "tokens": ["sms/events", "sms/summary", "sms/test-send"] },
+        { "file": "packages/sdk/src/index.ts", "tokens": ["events(query?: OpgQuery)", "summary(query?: OpgQuery)", "testSend"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["opg_platform_sms_inspect", "opg_platform_app_sms_test_send"] }
+      ]
+    },
+    {
+      "id": "app_product_surface",
+      "checks": [
+        { "file": "packages/sdk/src/index.ts", "tokens": ["auth:", "users:", "payments:", "site:", "acquisition:", "realtime:"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["opg request --path", "opg_app_request"] }
+      ]
+    },
+    {
+      "id": "transport_and_credentials",
+      "checks": [
+        { "file": "packages/sdk/src/index.ts", "tokens": ["OpgRetryOptions", "OpgTransportError", "Idempotency-Key", "createAttemptSignal", "socket.off(eventName, handler)"] },
+        { "file": "packages/cli/src/index.ts", "tokens": ["apps?: Record", "refreshPlatformTokenIfNeeded(config)", "resolveCliPackageVersion"] }
+      ]
+    }
+  ]
+}

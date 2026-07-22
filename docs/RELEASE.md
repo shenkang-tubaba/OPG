@@ -199,8 +199,8 @@ git add packages/sdk/package.json package-lock.json
 git commit -m "chore(sdk): release 0.2.5"
 git tag opg-sdk/v0.2.5
 git push origin main opg-sdk/v0.2.5
-npm publish --workspace packages/sdk --access public --registry=https://registry.npmjs.org/
-npm view opg-sdk@latest version --registry=https://registry.npmjs.org/
+# tag 会触发 .github/workflows/npm-release.yml：test -> pack -> publish -> registry read-back
+npm view opg-sdk@0.2.5 version --registry=https://registry.npmjs.org/
 ```
 
 CLI 发布前确认 `packages/cli/package.json` 依赖的 `opg-sdk` 版本已经是目标版本：
@@ -211,11 +211,11 @@ git add packages/cli/package.json package-lock.json
 git commit -m "chore(cli): release 0.1.7"
 git tag opg-cli/v0.1.7
 git push origin main opg-cli/v0.1.7
-npm publish --workspace packages/cli --access public --registry=https://registry.npmjs.org/
-npm view @jamba/opg-cli@latest version --registry=https://registry.npmjs.org/
+# workflow 会先确认 CLI 依赖的 opg-sdk 已经存在，再发布 CLI
+npm view @jamba/opg-cli@0.1.7 version --registry=https://registry.npmjs.org/
 ```
 
-CLI 发布后做端到端验证：
+SDK 必须先于依赖它的 CLI 发布。CLI 发布后对隔离测试环境做端到端验证：
 
 ```bash
 npm run cli:verify

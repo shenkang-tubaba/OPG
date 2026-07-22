@@ -1,0 +1,91 @@
+name: npm Release
+
+on:
+  push:
+    tags:
+      - 'opg-sdk/v*'
+      - 'opg-cli/v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Resolve and verify release target
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "${RELEASE_TAG}" in
+            opg-sdk/v*)
+              workspace="packages/sdk"
+              package_name="opg-sdk"
+              version="${RELEASE_TAG#opg-sdk/v}"
+              ;;
+            opg-cli/v*)
+              workspace="packages/cli"
+              package_name="@jamba/opg-cli"
+              version="${RELEASE_TAG#opg-cli/v}"
+              ;;
+            *)
+              echo "Unsupported npm release tag: ${RELEASE_TAG}" >&2
+              exit 1
+              ;;
+          esac
+          package_version="$(node -p "require('./${workspace}/package.json').version")"
+          if [[ "${package_version}" != "${version}" ]]; then
+            echo "Tag version ${version} does not match ${workspace}/package.json ${package_version}" >&2
+            exit 1
+          fi
+          echo "workspace=${workspace}" >> "${GITHUB_OUTPUT}"
+          echo "package_name=${package_name}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify SDK dependency exists before CLI release
+        if: startsWith(github.ref_name, 'opg-cli/v')
+        shell: bash
+        run: |
+          sdk_version="$(node -p "require('./packages/cli/package.json').dependencies['opg-sdk']")"
+          npm view "opg-sdk@${sdk_version}" version --registry=https://registry.npmjs.org/
+
+      - run: npm run developer:surface:verify
+      - run: npm --prefix ${{ steps.release.outputs.workspace }} test
+      - run: cd ${{ steps.release.outputs.workspace }} && npm pack --dry-run
+
+      - name: Publish package
+        run: npm publish --workspace ${{ steps.release.outputs.workspace }} --access public --provenance --registry=https://registry.npmjs.org/
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify npm registry propagation
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.release.outputs.package_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            actual="$(npm view "${PACKAGE_NAME}@${VERSION}" version --registry=https://registry.npmjs.org/ 2>/dev/null || true)"
+            if [[ "${actual}" == "${VERSION}" ]]; then
+              echo "Verified ${PACKAGE_NAME}@${VERSION} on npm."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "npm registry did not expose ${PACKAGE_NAME}@${VERSION} in time" >&2
+          exit 1
