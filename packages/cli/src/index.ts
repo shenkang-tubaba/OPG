@@ -32,6 +32,14 @@ type CliCredentials = {
     keyPrefix?: string;
     keyLast4?: string;
     updatedAt?: string;
+    apps?: Record<string, {
+      apiKey?: string;
+      apiKeyId?: string;
+      grantId?: string;
+      keyPrefix?: string;
+      keyLast4?: string;
+      updatedAt?: string;
+    }>;
   }>;
 };
 
@@ -64,6 +72,20 @@ async function main() {
   if (command === 'smoke') {
     const client = await getClientFromLocalConfigWithFlagOverrides(parseFlags(args.slice(1)));
     console.log(JSON.stringify(await client.sdk.smokeTest(), null, 2));
+    return;
+  }
+  if (command === 'request') {
+    const flags = parseFlags(args.slice(1));
+    const path = flags.path || '';
+    if (!path) throw new Error('Missing app path. Use: opg request --path /users/me --method GET');
+    const client = await getClientFromLocalConfigWithFlagOverrides(flags);
+    printJson(await client.request(path, {
+      method: (flags.method || 'GET').toUpperCase(),
+      query: flags.query ? JSON.parse(flags.query) : undefined,
+      body: flags.json ? JSON.parse(flags.json) : undefined,
+      timeoutMs: flags.timeout ? Number(flags.timeout) * 1000 : undefined,
+      idempotencyKey: flags.idempotencyKey || flags['idempotency-key'],
+    }));
     return;
   }
   if (command === 'db' || command === 'database') {
@@ -257,15 +279,15 @@ async function installCodex(flags: Record<string, string>) {
     throw new Error('Missing OPG base URL. Run "opg init --base-url <url> --app <slug>" first, or pass --base-url.');
   }
   await mkdir('.opg', { recursive: true });
+  const cliVersion = await resolveCliPackageVersion();
   const mcpConfig = {
     mcpServers: {
       opg: {
         command: 'npx',
-        args: ['-y', '@jamba/opg-cli', 'mcp'],
+        args: ['-y', `@jamba/opg-cli@${cliVersion}`, 'mcp'],
         env: {
           OPG_BASE_URL: config.baseUrl,
           OPG_APP_SLUG: config.app,
-          OPG_PLATFORM_TOKEN: '${OPG_PLATFORM_TOKEN}',
         },
       },
     },
@@ -403,6 +425,13 @@ async function runSchemaCommand(commandArgs: string[]) {
       dry_run: flags.apply ? false : flags['dry-run'] === undefined ? true : parseBooleanFlag(flags['dry-run']),
     };
     printJson(await client.apps.schema.addColumn(appId, table, payload));
+    return;
+  }
+  if ((resource === 'policy' || resource === 'policies') && (action === 'upsert' || action === 'set' || action === 'create')) {
+    const positionals = positionalArgs(commandArgs.slice(2));
+    const table = flags.table || positionals[0] || '';
+    if (!table) throw new Error('Missing table. Use: opg schema policy upsert <table> --json {...}');
+    printJson(await client.apps.schema.upsertPolicy(appId, table, parseJsonPayload(flags)));
     return;
   }
 
@@ -753,12 +782,19 @@ async function runAppCommand(commandArgs: string[]) {
       throw new Error('Missing app slug. Use: opg app use <slug>');
     }
     const local = await readOptionalLocalConfig();
+    const credentials = await readCredentials();
+    const profile = flags.profile || local.profile || 'default';
+    const storedProfile = credentials.profiles?.[profile];
+    const hasAppCredential = !!storedProfile?.apps?.[app]?.apiKey || (storedProfile?.app === app && !!storedProfile.apiKey);
     await writeProjectAppConfig({
       baseUrl: flags.baseUrl || flags['base-url'] || local.baseUrl || '',
       app,
-      profile: flags.profile || local.profile || 'default',
+      profile,
     });
     console.log(`Current OPG app set to ${app}.`);
+    if (!hasAppCredential && !process.env.OPG_API_KEY) {
+      console.error(`No app-scoped credential is stored for ${app}. Run "opg login --app ${app}" before app API calls.`);
+    }
     return;
   }
 
@@ -831,6 +867,8 @@ async function runPlatformCommand(commandArgs: string[]) {
     const appId = requirePlatformAppId(flags);
     const formId = flags.formId || flags['form-id'] || flags.form || '';
     const questionId = flags.questionId || flags['question-id'] || '';
+    const ruleId = flags.ruleId || flags['rule-id'] || '';
+    const formActionId = flags.formActionId || flags['form-action-id'] || flags.actionId || flags['action-id'] || '';
     if (action === 'list') {
       printJson(await client.apps.forms.list(appId));
       return;
@@ -893,6 +931,67 @@ async function runPlatformCommand(commandArgs: string[]) {
       const questionIds = String(flags.questionIds || flags['question-ids'] || '').split(',').map((item) => item.trim()).filter(Boolean);
       if (!questionIds.length) throw new Error('Missing question ids. Use --question-ids <a,b>');
       printJson(await client.apps.forms.reorderQuestions(appId, formId, questionIds));
+      return;
+    }
+    if (action === 'logic-create') {
+      if (!formId) throw new Error('Missing form id. Use --form-id <id>.');
+      printJson(await client.apps.forms.createLogicRule(appId, formId, parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'logic-update') {
+      if (!formId || !ruleId) throw new Error('Missing form or rule id. Use --form-id <id> --rule-id <id>.');
+      printJson(await client.apps.forms.updateLogicRule(appId, formId, ruleId, parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'logic-delete') {
+      if (!formId || !ruleId) throw new Error('Missing form or rule id. Use --form-id <id> --rule-id <id>.');
+      printJson(await client.apps.forms.deleteLogicRule(appId, formId, ruleId));
+      return;
+    }
+    if (action === 'action-create') {
+      if (!formId) throw new Error('Missing form id. Use --form-id <id>.');
+      printJson(await client.apps.forms.createAction(appId, formId, parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'action-update') {
+      if (!formId || !formActionId) throw new Error('Missing form or action id. Use --form-id <id> --form-action-id <id>.');
+      printJson(await client.apps.forms.updateAction(appId, formId, formActionId, parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'action-delete') {
+      if (!formId || !formActionId) throw new Error('Missing form or action id. Use --form-id <id> --form-action-id <id>.');
+      printJson(await client.apps.forms.deleteAction(appId, formId, formActionId));
+      return;
+    }
+  }
+
+  if (resource === 'acquisition') {
+    const appId = requirePlatformAppId(flags);
+    const optionId = flags.optionId || flags['option-id'] || '';
+    if (action === 'source-options' || action === 'list') {
+      printJson(await client.apps.acquisition.sourceOptions(appId));
+      return;
+    }
+    if (action === 'source-create') {
+      printJson(await client.apps.acquisition.createSourceOption(appId, parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'source-update') {
+      if (!optionId) throw new Error('Missing source option id. Use --option-id <id>.');
+      printJson(await client.apps.acquisition.updateSourceOption(appId, optionId, parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'source-delete') {
+      if (!optionId) throw new Error('Missing source option id. Use --option-id <id>.');
+      printJson(await client.apps.acquisition.deleteSourceOption(appId, optionId));
+      return;
+    }
+    if (action === 'summary') {
+      printJson(await client.apps.acquisition.summary(appId, parseQueryPayload(flags)));
+      return;
+    }
+    if (action === 'users') {
+      printJson(await client.apps.acquisition.users(appId, parseQueryPayload(flags)));
       return;
     }
   }
@@ -1017,19 +1116,117 @@ async function runPlatformCommand(commandArgs: string[]) {
   }
 
   if (resource === 'payments') {
-    const appId = requirePlatformAppId(flags);
     if (action === 'products') {
+      const appId = requirePlatformAppId(flags);
       printJson(await client.apps.payments.products(appId));
       return;
     }
-    if (action === 'orders') {
+    if (action === 'orders' && (flags.appId || flags['app-id'])) {
+      const appId = requirePlatformAppId(flags);
       printJson(await client.apps.payments.orders(appId, parseQueryPayload(flags)));
       return;
     }
+    if (action === 'orders') {
+      printJson(await client.payments.orders(parseQueryPayload(flags)));
+      return;
+    }
     if (action === 'refund') {
+      const appId = requirePlatformAppId(flags);
       const orderId = flags.orderId || flags['order-id'] || '';
       if (!orderId) throw new Error('Missing order id. Use: opg platform payments refund --app-id <id> --order-id <id> --json {...}');
       printJson(await client.apps.payments.refundOrder(appId, orderId, flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+    if (action === 'test-one-time') {
+      printJson(await client.payments.testOneTime(flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+    if (action === 'test-wechat') {
+      printJson(await client.payments.testWechatOneTime(flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+    if (action === 'test-recurring') {
+      printJson(await client.payments.testRecurring(flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+    if (action === 'test-full-flow') {
+      printJson(await client.payments.testFullFlow(flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+  }
+
+  if (resource === 'points') {
+    if (action !== 'grant') throw new Error(`Unknown points command: ${action}`);
+    printJson(await client.apps.ai.grantPoints(requirePlatformAppId(flags), parseJsonPayload(flags)));
+    return;
+  }
+
+  if (resource === 'users') {
+    const appId = requirePlatformAppId(flags);
+    const userId = flags.userId || flags['user-id'] || '';
+    if (!userId) throw new Error('Missing user id. Use --user-id <id>.');
+    if (action === 'deactivate') {
+      printJson(await client.apps.users.deactivate(appId, userId, flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+    if (action === 'restore') {
+      printJson(await client.apps.users.restore(appId, userId));
+      return;
+    }
+    if (action === 'unlink-phone') {
+      printJson(await client.apps.users.unlinkPhone(appId, userId));
+      return;
+    }
+    if (action === 'unlink-email') {
+      printJson(await client.apps.users.unlinkEmail(appId, userId));
+      return;
+    }
+  }
+
+  if (resource === 'sms') {
+    if (action === 'events') {
+      printJson(await client.sms.events(parseQueryPayload(flags)));
+      return;
+    }
+    if (action === 'summary') {
+      printJson(await client.sms.summary(parseQueryPayload(flags)));
+      return;
+    }
+    if (action === 'test-send') {
+      printJson(await client.sms.testSend(requirePlatformAppId(flags), parseJsonPayload(flags)));
+      return;
+    }
+  }
+
+  if (resource === 'voices' || resource === 'voice') {
+    const voiceId = flags.voiceId || flags['voice-id'] || '';
+    if (action === 'list') {
+      printJson(await client.ai.voices.list(parseQueryPayload(flags)));
+      return;
+    }
+    if (action === 'migration-create') {
+      printJson(await client.ai.voices.createMigrationJob(parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'migration-get') {
+      const jobId = flags.jobId || flags['job-id'] || '';
+      if (!jobId) throw new Error('Missing migration job id. Use --job-id <id>.');
+      printJson(await client.ai.voices.getMigrationJob(jobId));
+      return;
+    }
+    if (!voiceId) throw new Error('Missing voice id. Use --voice-id <id>.');
+    if (action === 'migrate') {
+      printJson(await client.ai.voices.migrate(voiceId, flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+    if (action === 'retry-clone') {
+      printJson(await client.ai.voices.retryClone(voiceId, flags.json ? parseJsonPayload(flags) : {}));
+      return;
+    }
+    if (action === 'activate') {
+      const mappingId = flags.mappingId || flags['mapping-id'] || '';
+      if (!mappingId) throw new Error('Missing mapping id. Use --mapping-id <id>.');
+      printJson(await client.ai.voices.activateMapping(voiceId, mappingId));
       return;
     }
   }
@@ -1182,9 +1379,14 @@ async function startMcpServer() {
     name: 'opg-mcp-server',
     version: '0.1.0',
   });
-  const registerTool = (name: string, config: Record<string, unknown>, handler: (input: any) => Promise<any>) => {
-    (server as any).registerTool(name, config, handler);
+  type ToolRegistrar = {
+    registerTool(
+      name: string,
+      config: Record<string, unknown>,
+      handler: (input: any) => Promise<unknown>,
+    ): void;
   };
+  const registerTool = (server as unknown as ToolRegistrar).registerTool.bind(server);
 
   registerTool(
     'opg_platform_apps_list',
@@ -2278,6 +2480,225 @@ async function startMcpServer() {
   );
 
   registerTool(
+    'opg_platform_app_form_logic_rule_mutate',
+    {
+      title: 'Mutate OPG Form Logic Rule',
+      description: 'Create, update, or delete a conditional logic rule on a hosted form.',
+      inputSchema: {
+        action: z.enum(['create', 'update', 'delete']),
+        appId: z.string().min(1),
+        formId: z.string().min(1),
+        ruleId: z.string().min(1).optional(),
+        payload: z.record(z.unknown()).default({}),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ action, appId, formId, ruleId, payload }: any) => {
+      if (action === 'create') return toToolResult(await platformClient.apps.forms.createLogicRule(appId, formId, payload));
+      if (!ruleId) throw new Error('ruleId is required for update and delete');
+      return toToolResult(action === 'update'
+        ? await platformClient.apps.forms.updateLogicRule(appId, formId, ruleId, payload)
+        : await platformClient.apps.forms.deleteLogicRule(appId, formId, ruleId));
+    },
+  );
+
+  registerTool(
+    'opg_platform_app_form_action_mutate',
+    {
+      title: 'Mutate OPG Form Action',
+      description: 'Create, update, or delete a post-submit action on a hosted form.',
+      inputSchema: {
+        action: z.enum(['create', 'update', 'delete']),
+        appId: z.string().min(1),
+        formId: z.string().min(1),
+        actionId: z.string().min(1).optional(),
+        payload: z.record(z.unknown()).default({}),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ action, appId, formId, actionId, payload }: any) => {
+      if (action === 'create') return toToolResult(await platformClient.apps.forms.createAction(appId, formId, payload));
+      if (!actionId) throw new Error('actionId is required for update and delete');
+      return toToolResult(action === 'update'
+        ? await platformClient.apps.forms.updateAction(appId, formId, actionId, payload)
+        : await platformClient.apps.forms.deleteAction(appId, formId, actionId));
+    },
+  );
+
+  registerTool(
+    'opg_platform_app_acquisition_source_options',
+    {
+      title: 'Manage OPG Acquisition Sources',
+      description: 'List, create, update, or delete acquisition source options for an app.',
+      inputSchema: {
+        action: z.enum(['list', 'create', 'update', 'delete']),
+        appId: z.string().min(1),
+        optionId: z.string().min(1).optional(),
+        payload: z.record(z.unknown()).default({}),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ action, appId, optionId, payload }: any) => {
+      if (action === 'list') return toToolResult(await platformClient.apps.acquisition.sourceOptions(appId));
+      if (action === 'create') return toToolResult(await platformClient.apps.acquisition.createSourceOption(appId, payload));
+      if (!optionId) throw new Error('optionId is required for update and delete');
+      return toToolResult(action === 'update'
+        ? await platformClient.apps.acquisition.updateSourceOption(appId, optionId, payload)
+        : await platformClient.apps.acquisition.deleteSourceOption(appId, optionId));
+    },
+  );
+
+  registerTool(
+    'opg_platform_app_acquisition_report',
+    {
+      title: 'Read OPG Acquisition Report',
+      description: 'Read acquisition summary or attributed-user details for an app.',
+      inputSchema: {
+        report: z.enum(['summary', 'users']),
+        appId: z.string().min(1),
+        query: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ report, appId, query }: any) => toToolResult(report === 'summary'
+      ? await platformClient.apps.acquisition.summary(appId, query)
+      : await platformClient.apps.acquisition.users(appId, query)),
+  );
+
+  registerTool(
+    'opg_schema_policy_upsert',
+    {
+      title: 'Upsert OPG Data Policy',
+      description: 'Create or update an access policy for one app data table.',
+      inputSchema: { appId: z.string().min(1), table: z.string().min(1), payload: z.record(z.unknown()) },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ appId, table, payload }: any) => toToolResult(await platformClient.apps.schema.upsertPolicy(appId, table, payload)),
+  );
+
+  registerTool(
+    'opg_platform_app_points_grant',
+    {
+      title: 'Grant OPG App Points',
+      description: 'Grant AI points to a user in one tenant app.',
+      inputSchema: { appId: z.string().min(1), payload: z.record(z.unknown()) },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ appId, payload }: any) => toToolResult(await platformClient.apps.ai.grantPoints(appId, payload)),
+  );
+
+  registerTool(
+    'opg_platform_app_user_lifecycle',
+    {
+      title: 'Manage OPG App User Lifecycle',
+      description: 'Deactivate, restore, or unlink phone/email identity for a tenant user.',
+      inputSchema: {
+        action: z.enum(['deactivate', 'restore', 'unlink_phone', 'unlink_email']),
+        appId: z.string().min(1),
+        userId: z.string().min(1),
+        payload: z.record(z.unknown()).default({}),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ action, appId, userId, payload }: any) => {
+      if (action === 'deactivate') return toToolResult(await platformClient.apps.users.deactivate(appId, userId, payload));
+      if (action === 'restore') return toToolResult(await platformClient.apps.users.restore(appId, userId));
+      if (action === 'unlink_phone') return toToolResult(await platformClient.apps.users.unlinkPhone(appId, userId));
+      return toToolResult(await platformClient.apps.users.unlinkEmail(appId, userId));
+    },
+  );
+
+  registerTool(
+    'opg_platform_sms_inspect',
+    {
+      title: 'Inspect OPG SMS Delivery',
+      description: 'Read platform SMS delivery events or summary metrics.',
+      inputSchema: {
+        view: z.enum(['events', 'summary']),
+        query: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ view, query }: any) => toToolResult(view === 'events'
+      ? await platformClient.sms.events(query)
+      : await platformClient.sms.summary(query)),
+  );
+
+  registerTool(
+    'opg_platform_app_sms_test_send',
+    {
+      title: 'Send OPG SMS Test',
+      description: 'Send a test SMS using one tenant app configuration.',
+      inputSchema: { appId: z.string().min(1), payload: z.record(z.unknown()) },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ appId, payload }: any) => toToolResult(await platformClient.sms.testSend(appId, payload)),
+  );
+
+  registerTool(
+    'opg_platform_ai_voices_list',
+    {
+      title: 'List OPG AI Voices',
+      description: 'List portable voice assets and migration state.',
+      inputSchema: { query: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional() },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ query }: any) => toToolResult(await platformClient.ai.voices.list(query)),
+  );
+
+  registerTool(
+    'opg_platform_ai_voice_operation',
+    {
+      title: 'Operate OPG AI Voice',
+      description: 'Migrate, retry cloning, activate a mapping, or inspect a voice migration job.',
+      inputSchema: {
+        action: z.enum(['migration_create', 'migration_get', 'migrate', 'retry_clone', 'activate_mapping']),
+        voiceId: z.string().min(1).optional(),
+        jobId: z.string().min(1).optional(),
+        mappingId: z.string().min(1).optional(),
+        payload: z.record(z.unknown()).default({}),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ action, voiceId, jobId, mappingId, payload }: any) => {
+      if (action === 'migration_create') return toToolResult(await platformClient.ai.voices.createMigrationJob(payload));
+      if (action === 'migration_get') {
+        if (!jobId) throw new Error('jobId is required');
+        return toToolResult(await platformClient.ai.voices.getMigrationJob(jobId));
+      }
+      if (!voiceId) throw new Error('voiceId is required');
+      if (action === 'migrate') return toToolResult(await platformClient.ai.voices.migrate(voiceId, payload));
+      if (action === 'retry_clone') return toToolResult(await platformClient.ai.voices.retryClone(voiceId, payload));
+      if (!mappingId) throw new Error('mappingId is required');
+      return toToolResult(await platformClient.ai.voices.activateMapping(voiceId, mappingId));
+    },
+  );
+
+  registerTool(
+    'opg_app_request',
+    {
+      title: 'Call OPG App API',
+      description: 'Call any route under the configured /:app/v1 API. Prefer a specific tool when available.',
+      inputSchema: {
+        method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).default('GET'),
+        path: z.string().min(1),
+        query: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+        body: z.record(z.unknown()).optional(),
+        timeoutMs: z.number().int().min(100).max(600_000).optional(),
+        idempotencyKey: z.string().min(1).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ method, path, query, body, timeoutMs, idempotencyKey }: any) => toToolResult(await client.request(path, {
+      method,
+      query,
+      body,
+      timeoutMs,
+      idempotencyKey,
+    })),
+  );
+
+  registerTool(
     'opg_platform_request',
     {
       title: 'Call OPG Platform API',
@@ -2581,9 +3002,12 @@ async function startMcpServer() {
 }
 
 function toToolResult(data: unknown) {
+  const structuredContent = data !== null && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : { value: data };
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
-    structuredContent: data as Record<string, unknown>,
+    structuredContent,
   };
 }
 
@@ -2592,7 +3016,23 @@ async function getClientFromConfig() {
 }
 
 async function getPlatformClientFromConfig() {
-  return createOpgPlatformClient(await readLocalConfig());
+  const local = await readOptionalLocalConfig();
+  let config: CliConfig = {
+    baseUrl: local.baseUrl || '',
+    app: local.app || '',
+    apiKey: local.apiKey || '',
+    platformToken: local.platformToken || '',
+    platformRefreshToken: local.platformRefreshToken || '',
+    profile: local.profile || 'default',
+  };
+  return createOpgPlatformClient({
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    platformToken: async () => {
+      config = await refreshPlatformTokenIfNeeded(config);
+      return config.platformToken || '';
+    },
+  });
 }
 
 async function getClientFromLocalConfigWithFlagOverrides(flags: Record<string, string>) {
@@ -2637,10 +3077,14 @@ async function readOptionalLocalConfig(): Promise<Record<string, string>> {
   const profile = String(local.profile || credentials.currentProfile || 'default').trim() || 'default';
   const credentialProfile = credentials.profiles?.[profile] || {};
   const envFile = await readDotEnvLocal();
+  const baseUrl = process.env.OPG_BASE_URL || envFile.OPG_BASE_URL || local.baseUrl || credentialProfile.baseUrl || '';
+  const app = process.env.OPG_APP_SLUG || envFile.OPG_APP_SLUG || local.app || credentialProfile.app || '';
+  const appCredential = app ? credentialProfile.apps?.[app] : undefined;
+  const legacyApiKey = credentialProfile.app === app ? credentialProfile.apiKey : undefined;
   return {
-    baseUrl: process.env.OPG_BASE_URL || envFile.OPG_BASE_URL || local.baseUrl || credentialProfile.baseUrl || '',
-    app: process.env.OPG_APP_SLUG || envFile.OPG_APP_SLUG || local.app || credentialProfile.app || '',
-    apiKey: process.env.OPG_API_KEY || envFile.OPG_API_KEY || credentialProfile.apiKey || local.apiKey || '',
+    baseUrl,
+    app,
+    apiKey: process.env.OPG_API_KEY || envFile.OPG_API_KEY || appCredential?.apiKey || legacyApiKey || local.apiKey || '',
     platformToken: process.env.OPG_PLATFORM_TOKEN || envFile.OPG_PLATFORM_TOKEN || credentialProfile.platformToken || local.platformToken || '',
     platformRefreshToken: credentialProfile.platformRefreshToken || local.platformRefreshToken || '',
     profile,
@@ -2764,6 +3208,20 @@ function parseQueryPayload(flags: Record<string, string>): Record<string, string
     'feedbackId',
     'order-id',
     'orderId',
+    'user-id',
+    'userId',
+    'option-id',
+    'optionId',
+    'voice-id',
+    'voiceId',
+    'job-id',
+    'jobId',
+    'mapping-id',
+    'mappingId',
+    'rule-id',
+    'ruleId',
+    'form-action-id',
+    'formActionId',
     'json',
     'body',
     'method',
@@ -2869,19 +3327,43 @@ function buildApiUrl(baseUrl: string, route: string) {
   return `${baseUrl.replace(/\/+$/, '')}/api/v1${route}`;
 }
 
-async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+async function resolveCliPackageVersion() {
+  try {
+    const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string };
+    if (packageJson.version) return packageJson.version;
+  } catch {
+    // Fall through to the installed npm lifecycle version when package metadata is unavailable.
+  }
+  return process.env.npm_package_version || '0.2.0';
+}
+
+async function postJson<T>(url: string, body: Record<string, unknown>, timeoutMs = 30_000): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if ((error as { name?: string })?.name === 'TimeoutError') {
+      throw new Error(`Request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  }
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {};
+  }
   if (!response.ok) {
-    throw new Error(data?.message || data?.detail || `Request failed (${response.status})`);
+    throw new Error(data?.message || data?.detail || text || `Request failed (${response.status})`);
   }
   return data?.data || data;
 }
@@ -2945,20 +3427,30 @@ async function writeLocalLoginCredentials(input: {
   await mkdir('.opg', { recursive: true });
   const existing = await readCredentials();
   const profile = input.profile || 'default';
+  const previous = existing.profiles?.[profile] || {};
+  const appCredential = {
+    apiKey: input.apiKey,
+    apiKeyId: input.apiKeyId,
+    grantId: input.grantId,
+    keyPrefix: input.keyPrefix,
+    keyLast4: input.keyLast4,
+    updatedAt: new Date().toISOString(),
+  };
   const next: CliCredentials = {
     currentProfile: profile,
     profiles: {
       ...(existing.profiles || {}),
       [profile]: {
+        ...previous,
         baseUrl: input.baseUrl,
         app: input.app,
-        apiKey: input.apiKey,
-        platformToken: existing.profiles?.[profile]?.platformToken,
-        platformRefreshToken: existing.profiles?.[profile]?.platformRefreshToken,
-        apiKeyId: input.apiKeyId,
-        grantId: input.grantId,
-        keyPrefix: input.keyPrefix,
-        keyLast4: input.keyLast4,
+        ...appCredential,
+        platformToken: previous.platformToken,
+        platformRefreshToken: previous.platformRefreshToken,
+        apps: {
+          ...(previous.apps || {}),
+          [input.app]: appCredential,
+        },
         updatedAt: new Date().toISOString(),
       },
     },
@@ -3016,6 +3508,13 @@ async function writeProjectAppConfig(input: {
   const existing = await readCredentials();
   const profile = input.profile || existing.currentProfile || 'default';
   const previous = existing.profiles?.[profile] || {};
+  const targetAppCredential = previous.apps?.[input.app] || (previous.app === input.app ? {
+    apiKey: previous.apiKey,
+    apiKeyId: previous.apiKeyId,
+    grantId: previous.grantId,
+    keyPrefix: previous.keyPrefix,
+    keyLast4: previous.keyLast4,
+  } : undefined);
   const next: CliCredentials = {
     currentProfile: profile,
     profiles: {
@@ -3024,6 +3523,11 @@ async function writeProjectAppConfig(input: {
         ...previous,
         baseUrl: input.baseUrl,
         app: input.app,
+        apiKey: targetAppCredential?.apiKey,
+        apiKeyId: targetAppCredential?.apiKeyId,
+        grantId: targetAppCredential?.grantId,
+        keyPrefix: targetAppCredential?.keyPrefix,
+        keyLast4: targetAppCredential?.keyLast4,
         updatedAt: new Date().toISOString(),
       },
     },
@@ -3265,6 +3769,7 @@ Usage:
   opg schema table drop customers --confirm drop:customers --apply
   opg schema column add customers --name phone --type text
   opg schema column add customers --name phone --type text --apply
+  opg schema policy upsert customers --json '{"read":"owner","write":"owner"}'
 
 Options:
   --app-id <id-or-slug>  Target tenant app id or slug. Falls back to selected app.
@@ -3388,6 +3893,14 @@ Usage:
   opg platform forms publish --app-id <id> --form-id <id>
   opg platform forms responses --app-id <id> --form-id <id>
   opg platform forms question-create --app-id <id> --form-id <id> --json '{...}'
+  opg platform forms logic-create --app-id <id> --form-id <id> --json '{...}'
+  opg platform forms action-create --app-id <id> --form-id <id> --json '{...}'
+  opg platform acquisition summary --app-id <id> --days 30
+  opg platform points grant --app-id <id> --json '{...}'
+  opg platform users deactivate --app-id <id> --user-id <id> --json '{...}'
+  opg platform sms summary --days 30
+  opg platform sms test-send --app-id <id> --json '{...}'
+  opg platform voices list
   opg platform notifications channels list --app-id <id>
   opg platform notifications channels create --app-id <id> --json '{...}'
   opg platform notifications channels test --app-id <id> --channel-id <id>
@@ -3432,6 +3945,9 @@ Options:
   --app-id <id>          Target tenant app id for app data operations.
   --form-id <id>         Form id or key for form commands.
   --question-id <id>     Question id for form question commands.
+  --rule-id <id>         Logic rule id for form commands.
+  --form-action-id <id>  Post-submit form action id.
+  --user-id <id>         Tenant user id for lifecycle commands.
   --connector <id>       Connector id or slug for connector commands.
   --credential <id>      Credential id or slug for connector credential commands.
   --action-id <id>       Connector action id or slug for invoke/run commands.
@@ -3494,6 +4010,7 @@ Core commands:
   app           List, create, or select tenant apps.
   manifest      Print current app SDK manifest.
   smoke         Run app SDK smoke test.
+  request       Call an app-scoped /:app/v1 route with the configured grant.
   db            Inspect or query app-owned database tables.
   schema        Create structured app data tables and columns.
   data          Read and write registered app data rows.

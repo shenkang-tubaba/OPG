@@ -39,6 +39,7 @@ opg login --app demo
 ```
 
 app 级授权会生成 Developer Grant，用于 `opg manifest`、`opg smoke`、`opg db ...` 和 MCP 的 app-scoped 工具。
+同一个 profile 可以保存多个 app 的 Developer Grant；`opg app use` 会按 app 选择对应凭证，不会复用另一个 app 的 key。
 
 ## App 构建面
 
@@ -144,6 +145,32 @@ opg platform forms question-create \
 opg platform forms publish --app-id <app-id> --form-id <form-id>
 opg platform forms responses --app-id <app-id> --form-id <form-id>
 opg platform forms metrics --app-id <app-id> --form-id nps
+opg platform forms logic-create --app-id <app-id> --form-id <form-id> --json '{...}'
+opg platform forms logic-update --app-id <app-id> --form-id <form-id> --rule-id <rule-id> --json '{...}'
+opg platform forms action-create --app-id <app-id> --form-id <form-id> --json '{...}'
+```
+
+来源归因、积分、用户生命周期、短信和语音运维：
+
+```bash
+opg platform acquisition source-options --app-id <app-id>
+opg platform acquisition summary --app-id <app-id> --from 2026-01-01 --to 2026-01-31
+opg platform acquisition users --app-id <app-id> --page 1
+opg platform points grant --app-id <app-id> --json '{"user_id":"<user-id>","points":100}'
+opg platform users deactivate --app-id <app-id> --user-id <user-id> --json '{"reason":"abuse"}'
+opg platform users restore --app-id <app-id> --user-id <user-id>
+opg platform sms events --days 7
+opg platform sms summary --days 30
+opg platform sms test-send --app-id <app-id> --json '{"phone":"+8613800000000","template_id":"..."}'
+opg platform voices list
+opg platform voices retry-clone --voice-id <voice-id>
+```
+
+SDK 或 CLI 尚未提供专用命令时，可以使用受同一认证、超时和错误模型保护的通用入口：
+
+```bash
+opg request --path /users/me --method GET
+opg platform request --path /storage/providers --method GET
 ```
 
 配置管理员通知：
@@ -297,6 +324,18 @@ opg mcp
 - `opg_platform_app_form_create`
 - `opg_platform_app_form_publish`
 - `opg_platform_app_form_responses_list`
+- `opg_platform_app_form_logic_rule_mutate`
+- `opg_platform_app_form_action_mutate`
+- `opg_platform_app_acquisition_source_options`
+- `opg_platform_app_acquisition_report`
+- `opg_platform_app_points_grant`
+- `opg_platform_app_user_lifecycle`
+- `opg_platform_sms_inspect`
+- `opg_platform_app_sms_test_send`
+- `opg_platform_ai_voices_list`
+- `opg_platform_ai_voice_operation`
+- `opg_schema_policy_upsert`
+- `opg_app_request`
 - `opg_form_manifest_get`
 - `opg_form_response_submit`
 - `opg_platform_app_notification_channels_list`
@@ -342,7 +381,7 @@ opg platform request --method PATCH --path /apps/<app-id>/admins/<admin-user-id>
 CLI 会读取：
 
 - `.opg/opg.config.json`：当前 base URL、app、profile。
-- `.opg/credentials.json`：平台 token 和 app Developer Grant。
+- `.opg/credentials.json`：平台 token 和按 app 隔离的 Developer Grant；文件权限为 `0600`。
 - `.env.local`：可选环境变量。
 
 常用环境变量：
@@ -358,14 +397,21 @@ OPG_PLATFORM_TOKEN=eyJ...
 
 ## 发版前验收
 
-发布 CLI 前先构建并跑完整验收：
+提交或发布前先跑离线质量门禁：
 
 ```bash
-npm --prefix packages/cli run build
-npm run cli:verify
+npm run devtools:verify
 ```
 
-`npm run cli:verify` 会执行：
+该命令会构建 Gateway、SDK、CLI，运行 SDK transport/route 测试、CLI 配置/凭证测试，并校验 backend、SDK、CLI、MCP capability contract。
+
+`npm run cli:verify` 是会写入目标服务的端到端测试，只能对隔离测试环境执行：
+
+```bash
+OPG_TEST_BASE_URL=https://staging-opg.example.com npm run cli:verify
+```
+
+在线验收会执行：
 
 - help 菜单检查
 - `opg init`

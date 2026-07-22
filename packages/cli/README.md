@@ -40,6 +40,10 @@ The CLI reads `.opg/credentials.json`, `.env.local`, and `.opg/opg.config.json`.
 
 `opg login` opens a browser authorization URL and stores a global platform login in `.opg/credentials.json`. After an app exists, `opg login --app <slug>` creates an app-scoped Developer Grant for SDK, database, AI, upload, and video operations. `opg codex install` writes a Codex MCP config template without embedding secret values.
 
+App grants are isolated by app inside each profile. The generated MCP config
+pins the exact CLI version, and long-running MCP platform calls refresh the
+stored platform JWT automatically.
+
 ## Platform Control Plane
 
 App SDK operations stay app-scoped. Global operations use the platform token:
@@ -85,6 +89,11 @@ opg connector credential create crm --app-id <app-id> --json '{"slug":"default",
 opg connector action create crm --app-id <app-id> --json '{"slug":"lookup","method":"GET","path_template":"/customers/{{input.customer_id}}"}'
 opg connector invoke crm lookup --json '{"input":{"customer_id":"123"}}'
 opg platform request --path /storage/providers --method GET
+opg request --path /users/me --method GET
+opg platform acquisition summary --app-id <app-id> --days 30
+opg platform points grant --app-id <app-id> --json '{"user_id":"<id>","points":100}'
+opg platform sms summary --days 30
+opg platform voices list
 ```
 
 The MCP server also exposes platform tools for app creation, runtime settings,

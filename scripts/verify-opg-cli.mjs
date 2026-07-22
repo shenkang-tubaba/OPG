@@ -358,7 +358,8 @@ async function verifyCodexInstall(app) {
     await runCli(['codex', 'install', '--base-url', baseUrl, '--app', app.slug], { cwd: tempDir });
     const config = JSON.parse(await readFile(path.join(tempDir, '.opg/codex-mcp.json'), 'utf8'));
     assert(config.mcpServers?.opg?.command === 'npx', 'codex install did not write npx MCP command');
-    assert(config.mcpServers?.opg?.args?.includes('@jamba/opg-cli'), 'codex install did not reference @jamba/opg-cli');
+    assert(config.mcpServers?.opg?.args?.some((item) => item.startsWith('@jamba/opg-cli@')), 'codex install did not pin @jamba/opg-cli');
+    assert(!config.mcpServers?.opg?.env?.OPG_PLATFORM_TOKEN, 'codex install must not write a platform token placeholder');
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

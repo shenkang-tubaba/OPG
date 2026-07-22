@@ -19,7 +19,8 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json"
+    "build": "NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1",
