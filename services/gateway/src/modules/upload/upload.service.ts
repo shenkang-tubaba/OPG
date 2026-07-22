@@ -1,13 +1,14 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { createHash } from 'crypto';
-import { createWriteStream } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Readable } from 'stream';
-import { pipeline } from 'stream/promises';
+import { finished, pipeline } from 'stream/promises';
 import { PrismaClient } from '@prisma/client';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import configuration from '../../config/configuration';
 import { PRISMA_CLIENT } from '../../config/database.module';
@@ -106,7 +107,12 @@ export class UploadService {
     }
 
     const resolvedAppId = await this.resolveAppId(appSlug, appId);
-    const fileKey = this.buildObjectKey(resolvedAppId, userId, filename, keyPrefix);
+    const fileKey = this.buildObjectKey(
+      resolvedAppId,
+      userId,
+      filename,
+      this.normalizeKeyPrefix(keyPrefix, 'uploads'),
+    );
     const normalizedType = contentType || 'application/octet-stream';
 
     if (this.ossClient) {
@@ -132,6 +138,53 @@ export class UploadService {
     };
   }
 
+  async uploadStream(
+    userId: string,
+    filename: string,
+    contentType: string,
+    stream: Readable,
+    appSlug?: string,
+    keyPrefix = 'uploads',
+    appId?: string,
+  ) {
+    if (!filename) {
+      throw new BadRequestException('filename is required');
+    }
+    const resolvedAppId = await this.resolveAppId(appSlug, appId);
+    const fileKey = this.buildObjectKey(
+      resolvedAppId,
+      userId,
+      filename,
+      this.normalizeKeyPrefix(keyPrefix, 'uploads'),
+    );
+    return this.uploadStreamToKey(fileKey, contentType, stream);
+  }
+
+  async uploadLocalFile(
+    userId: string,
+    filename: string,
+    contentType: string,
+    localPath: string,
+    appSlug?: string,
+    keyPrefix = 'uploads',
+    appId?: string,
+  ): Promise<{ file_key: string; file_url: string }> {
+    if (!filename) {
+      throw new BadRequestException('filename is required');
+    }
+    if (!localPath) {
+      throw new BadRequestException('temporary upload path is required');
+    }
+    const resolvedAppId = await this.resolveAppId(appSlug, appId);
+    const fileKey = this.buildObjectKey(
+      resolvedAppId,
+      userId,
+      filename,
+      this.normalizeKeyPrefix(keyPrefix, 'uploads'),
+    );
+    return this.uploadLocalFileToKey(fileKey, contentType, localPath);
+  }
+
   async uploadStreamToKey(
     fileKey: string,
     contentType: string,
@@ -144,21 +197,66 @@ export class UploadService {
     }
     const normalizedType = contentType || 'application/octet-stream';
 
+    try {
+      if (this.ossClient) {
+        await this.ossClient.putStream(normalizedKey, stream, {
+          headers: {
+            'Content-Type': normalizedType,
+          },
+        });
+      } else if (this.s3Client) {
+        await this.uploadS3Stream(normalizedKey, normalizedType, stream);
+      } else {
+        await this.persistLocalStream(normalizedKey, stream);
+      }
+    } finally {
+      await this.closeOwnedStream(stream);
+    }
+
+    return {
+      file_key: normalizedKey,
+      file_url: this.buildFileUrl(normalizedKey),
+    };
+  }
+
+  async uploadLocalFileToKey(
+    fileKey: string,
+    contentType: string,
+    localPath: string,
+  ): Promise<{ file_key: string; file_url: string }> {
+    await this.refreshStorageProviderConfig();
+    const normalizedKey = String(fileKey || '').replace(/^\/+/, '');
+    if (!this.isLikelyManagedObjectKey(normalizedKey)) {
+      throw new BadRequestException('invalid managed file key');
+    }
+    const normalizedType = contentType || 'application/octet-stream';
+
     if (this.ossClient) {
-      await this.ossClient.putStream(normalizedKey, stream, {
-        headers: {
-          'Content-Type': normalizedType,
-        },
-      });
+      if (typeof this.ossClient.multipartUpload === 'function') {
+        await this.ossClient.multipartUpload(normalizedKey, localPath, {
+          parallel: 3,
+          partSize: 2 * 1024 * 1024,
+          headers: { 'Content-Type': normalizedType },
+        });
+      } else {
+        const stream = createReadStream(localPath);
+        try {
+          await this.ossClient.putStream(normalizedKey, stream, {
+            headers: { 'Content-Type': normalizedType },
+          });
+        } finally {
+          await this.closeOwnedStream(stream);
+        }
+      }
     } else if (this.s3Client) {
-      await this.s3Client.send(new PutObjectCommand({
-        Bucket: this.ossBucket,
-        Key: normalizedKey,
-        Body: stream,
-        ContentType: normalizedType,
-      }));
+      const stream = createReadStream(localPath);
+      try {
+        await this.uploadS3Stream(normalizedKey, normalizedType, stream);
+      } finally {
+        await this.closeOwnedStream(stream);
+      }
     } else {
-      await this.persistLocalStream(normalizedKey, stream);
+      await this.persistLocalFileFromPath(normalizedKey, localPath);
     }
 
     return {
@@ -294,8 +392,7 @@ export class UploadService {
     }
   }
 
-  async uploadAudio(file: Express.Multer.File, _userId: string, _appSlug?: string) {
-    await this.refreshStorageProviderConfig();
+  async uploadAudio(file: Express.Multer.File, userId: string, appSlug?: string) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
@@ -304,18 +401,10 @@ export class UploadService {
       throw new BadRequestException('Invalid audio file type');
     }
 
-    const filePath = `/uploads/audio/${Date.now()}-${file.originalname}`;
-    return {
-      filename: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size,
-      path: filePath,
-      url: this.cdnBaseUrl + filePath,
-    };
+    return this.uploadLocalFile(userId, file.originalname, file.mimetype, file.path, appSlug, 'uploads/audio');
   }
 
-  async uploadImage(file: Express.Multer.File, _userId: string, _appSlug?: string) {
-    await this.refreshStorageProviderConfig();
+  async uploadImage(file: Express.Multer.File, userId: string, appSlug?: string) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
@@ -324,43 +413,44 @@ export class UploadService {
       throw new BadRequestException('Invalid image file type');
     }
 
-    const filePath = `/uploads/images/${Date.now()}-${file.originalname}`;
-    return {
-      filename: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size,
-      path: filePath,
-      url: this.cdnBaseUrl + filePath,
-    };
+    return this.uploadLocalFile(userId, file.originalname, file.mimetype, file.path, appSlug, 'uploads/images');
   }
 
-  async uploadFile(file: Express.Multer.File, _userId: string, _appSlug?: string) {
-    await this.refreshStorageProviderConfig();
+  async uploadFile(file: Express.Multer.File, userId: string, appSlug?: string) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
-    const filePath = `/uploads/files/${Date.now()}-${file.originalname}`;
-    return {
-      filename: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size,
-      path: filePath,
-      url: this.cdnBaseUrl + filePath,
-    };
+    return this.uploadLocalFile(
+      userId,
+      file.originalname,
+      file.mimetype || 'application/octet-stream',
+      file.path,
+      appSlug,
+      'uploads/files',
+    );
   }
 
   private buildFileUrl(fileKey: string) {
+    const encodedKey = this.encodeFileKeyPath(fileKey);
     if (this.cdnBaseUrl) {
-      return `${this.cdnBaseUrl.replace(/\/+$/, '')}/${fileKey}`;
+      return `${this.cdnBaseUrl.replace(/\/+$/, '')}/${encodedKey}`;
     }
     if (this.ossBucket && this.ossEndpoint) {
       if (this.storageProviderType === 'S3' || this.storageProviderType === 'R2') {
         const endpoint = this.normalizeEndpoint(this.ossEndpoint);
-        return `${endpoint.startsWith('http') ? endpoint : `https://${endpoint}`}/${this.ossBucket}/${fileKey}`;
+        return `${endpoint.startsWith('http') ? endpoint : `https://${endpoint}`}/${this.ossBucket}/${encodedKey}`;
       }
-      return `https://${this.ossBucket}.${this.ossEndpoint}/${fileKey}`;
+      return `https://${this.ossBucket}.${this.ossEndpoint}/${encodedKey}`;
     }
-    return `/uploads/${fileKey}`;
+    return `/uploads/${encodedKey}`;
+  }
+
+  private encodeFileKeyPath(fileKey: string) {
+    return String(fileKey || '')
+      .replace(/^\/+/, '')
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
   }
 
   private async resolveAppId(appSlug?: string, appId?: string) {
@@ -620,9 +710,41 @@ export class UploadService {
     await fs.writeFile(localPath, fileBuffer);
   }
 
+  private async persistLocalFileFromPath(fileKey: string, sourcePath: string) {
+    const localPath = path.resolve(process.cwd(), 'uploads', fileKey);
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    await fs.copyFile(sourcePath, localPath);
+  }
+
   private async persistLocalStream(fileKey: string, stream: Readable) {
     const localPath = path.resolve(process.cwd(), 'uploads', fileKey);
     await fs.mkdir(path.dirname(localPath), { recursive: true });
     await pipeline(stream, createWriteStream(localPath));
+  }
+
+  private async uploadS3Stream(fileKey: string, contentType: string, stream: Readable) {
+    if (!this.s3Client) {
+      throw new BadRequestException('S3 storage is not configured');
+    }
+    const upload = new Upload({
+      client: this.s3Client,
+      params: {
+        Bucket: this.ossBucket,
+        Key: fileKey,
+        Body: stream,
+        ContentType: contentType,
+      },
+      queueSize: 3,
+      partSize: 5 * 1024 * 1024,
+      leavePartsOnError: false,
+    });
+    await upload.done();
+  }
+
+  private async closeOwnedStream(stream: Readable): Promise<void> {
+    if (!stream.destroyed) {
+      stream.destroy();
+    }
+    await finished(stream).catch(() => undefined);
   }
 }

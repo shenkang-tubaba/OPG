@@ -1,11 +1,11 @@
 import { BadRequestException, Body, Controller, Param, Post, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { diskStorage, memoryStorage } from 'multer';
-import { extname } from 'path';
 import { tenantControllerPaths } from '../../common/utils/controller-paths';
 import { DeveloperAuthorizationService } from '../developer-sdk/developer-authorization.service';
 import { DeveloperSdkAuthGuard } from '../developer-sdk/developer-sdk-auth.guard';
+import { cleanupTemporaryUpload, temporaryUploadStorage } from './temporary-upload';
+import { assertNoStorageScopeOverrides, StorageScopeOverrideBody } from './upload-request.policy';
 import { UploadService } from './upload.service';
 
 @ApiTags('Upload')
@@ -28,75 +28,58 @@ export class UploadController {
       filename: string;
       content_type?: string;
       contentType?: string;
-      key_prefix?: string;
-      keyPrefix?: string;
-      app_slug?: string;
-      appSlug?: string;
-      app_id?: string;
-      appId?: string;
-    },
+    } & StorageScopeOverrideBody,
   ) {
     this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
+    assertNoStorageScopeOverrides(body);
     return this.uploadService.getPresignedUrl(
       req.user.id,
       body.filename,
       body.content_type || body.contentType || 'application/octet-stream',
-      body.app_slug || body.appSlug || app || req.user.appSlug,
-      body.key_prefix || body.keyPrefix,
-      body.app_id || body.appId,
+      app || req.user.appSlug,
     );
   }
 
   @Post('audio')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads/audio',
-        filename: (_req, file, cb) => {
-          const randomName = Array(32)
-            .fill(null)
-            .map(() => Math.round(Math.random() * 16).toString(16))
-            .join('');
-          cb(null, `${randomName}${extname(file.originalname)}`);
-        },
-      }),
+      storage: temporaryUploadStorage(),
       limits: { fileSize: 100 * 1024 * 1024 },
     }),
   )
   @ApiOperation({ summary: '上传音频文件' })
   @ApiConsumes('multipart/form-data')
   async uploadAudio(@UploadedFile() file: Express.Multer.File, @Req() req: any, @Param('app') app: string) {
-    this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
-    return this.uploadService.uploadAudio(file, req.user.id, app || req.user.appSlug);
+    try {
+      this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
+      return await this.uploadService.uploadAudio(file, req.user.id, app || req.user.appSlug);
+    } finally {
+      await cleanupTemporaryUpload(file);
+    }
   }
 
   @Post('image')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads/images',
-        filename: (_req, file, cb) => {
-          const randomName = Array(32)
-            .fill(null)
-            .map(() => Math.round(Math.random() * 16).toString(16))
-            .join('');
-          cb(null, `${randomName}${extname(file.originalname)}`);
-        },
-      }),
+      storage: temporaryUploadStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   @ApiOperation({ summary: '上传图片文件' })
   @ApiConsumes('multipart/form-data')
   async uploadImage(@UploadedFile() file: Express.Multer.File, @Req() req: any, @Param('app') app: string) {
-    this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
-    return this.uploadService.uploadImage(file, req.user.id, app || req.user.appSlug);
+    try {
+      this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
+      return await this.uploadService.uploadImage(file, req.user.id, app || req.user.appSlug);
+    } finally {
+      await cleanupTemporaryUpload(file);
+    }
   }
 
   @Post('image-buffer')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(),
+      storage: temporaryUploadStorage(),
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
@@ -107,38 +90,32 @@ export class UploadController {
     @Req() req: any,
     @Param('app') app: string,
     @Body()
-    body: {
-      app_slug?: string;
-      appSlug?: string;
-      app_id?: string;
-      appId?: string;
-      key_prefix?: string;
-      keyPrefix?: string;
-    },
+    body: StorageScopeOverrideBody,
   ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
-    this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
-    const appSlug = body.app_slug || body.appSlug || app || req.user.appSlug;
-    const keyPrefix = body.key_prefix || body.keyPrefix || 'uploads/images';
-    const appId = body.app_id || body.appId;
-    return this.uploadService.uploadBuffer(
-      req.user.id,
-      file.originalname,
-      file.mimetype || 'application/octet-stream',
-      file.buffer,
-      appSlug,
-      keyPrefix,
-      appId,
-    );
+    try {
+      this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
+      assertNoStorageScopeOverrides(body);
+      return await this.uploadService.uploadLocalFile(
+        req.user.id,
+        file.originalname,
+        file.mimetype || 'application/octet-stream',
+        file.path,
+        app || req.user.appSlug,
+        'uploads/images',
+      );
+    } finally {
+      await cleanupTemporaryUpload(file);
+    }
   }
 
   @Post('file-buffer')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(),
-      limits: { fileSize: 100 * 1024 * 1024 },
+      storage: temporaryUploadStorage(),
+      limits: { fileSize: 50 * 1024 * 1024 },
     }),
   )
   @ApiOperation({ summary: '上传任意文件到 OSS（服务端中转）' })
@@ -148,13 +125,7 @@ export class UploadController {
     @Req() req: any,
     @Param('app') app: string,
     @Body()
-    body: {
-      app_slug?: string;
-      appSlug?: string;
-      app_id?: string;
-      appId?: string;
-      key_prefix?: string;
-      keyPrefix?: string;
+    body: StorageScopeOverrideBody & {
       content_type?: string;
       contentType?: string;
     },
@@ -162,41 +133,37 @@ export class UploadController {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
-    this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
-    const appSlug = body.app_slug || body.appSlug || app || req.user.appSlug;
-    const keyPrefix = body.key_prefix || body.keyPrefix || 'uploads/files';
-    const appId = body.app_id || body.appId;
-    return this.uploadService.uploadBuffer(
-      req.user.id,
-      file.originalname,
-      body.content_type || body.contentType || file.mimetype || 'application/octet-stream',
-      file.buffer,
-      appSlug,
-      keyPrefix,
-      appId,
-    );
+    try {
+      this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
+      assertNoStorageScopeOverrides(body);
+      return await this.uploadService.uploadLocalFile(
+        req.user.id,
+        file.originalname,
+        body.content_type || body.contentType || file.mimetype || 'application/octet-stream',
+        file.path,
+        app || req.user.appSlug,
+        'uploads/files',
+      );
+    } finally {
+      await cleanupTemporaryUpload(file);
+    }
   }
 
   @Post('file')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads/files',
-        filename: (_req, file, cb) => {
-          const randomName = Array(32)
-            .fill(null)
-            .map(() => Math.round(Math.random() * 16).toString(16))
-            .join('');
-          cb(null, `${randomName}${extname(file.originalname)}`);
-        },
-      }),
+      storage: temporaryUploadStorage(),
       limits: { fileSize: 50 * 1024 * 1024 },
     }),
   )
   @ApiOperation({ summary: '上传通用文件' })
   @ApiConsumes('multipart/form-data')
   async uploadFile(@UploadedFile() file: Express.Multer.File, @Req() req: any, @Param('app') app: string) {
-    this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
-    return this.uploadService.uploadFile(file, req.user.id, app || req.user.appSlug);
+    try {
+      this.developerAuthorizationService.assertActorScope(req.user, 'upload:write');
+      return await this.uploadService.uploadFile(file, req.user.id, app || req.user.appSlug);
+    } finally {
+      await cleanupTemporaryUpload(file);
+    }
   }
 }

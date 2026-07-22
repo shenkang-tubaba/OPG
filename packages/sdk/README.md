@@ -36,6 +36,15 @@ npx -y @jamba/opg-cli login --app your-app
 
 Use `@jamba/opg-cli` to generate local config and install the Codex MCP bridge.
 
+## Uploads
+
+Uploads are always scoped to the app configured on the SDK client. Do not pass
+`app_id`, `app_slug`, `key_prefix`, or their camelCase aliases in upload inputs;
+the gateway rejects client-controlled storage scope. Prefer
+`opg.upload.presignedUrl()` for direct uploads. The `imageBuffer()` and
+`fileBuffer()` methods remain compatibility endpoints and are streamed through
+server-managed temporary storage.
+
 ## Global Platform Control Plane
 
 Developer Grants are intentionally scoped by app and permission. To create apps
