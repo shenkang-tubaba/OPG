@@ -10,7 +10,7 @@
     "start:prod": "node dist/main",
     "start:container": "./scripts/start-with-migrations.sh",
     "docs:modules": "node ./scripts/generate-module-docs.mjs && node ./scripts/generate-appadmin-api-docs.mjs",
-    "test:p0": "tsx --tsconfig ./tsconfig.test.json --test src/modules/upload/upload-security.spec.ts"
+    "test:p0": "tsx --tsconfig ./tsconfig.test.json --test src/modules/upload/upload-security.spec.ts src/common/middleware/app-slug-alias.middleware.spec.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.48",
@@ -49,6 +49,7 @@
     "google-auth-library": "^10.6.2",
     "ioredis": "^5.10.1",
     "jose": "^6.2.3",
+    "lru-cache": "10.4.3",
     "lucide-vue-next": "^0.562.0",
     "mime-types": "^3.0.2",
     "multer": "^2.2.0",
