@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
-import { ConfigModule } from '@nestjs/config';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ConfigModule, ConfigType } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import configuration from './config/configuration';
 import { DatabaseModule } from './config/database.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -33,12 +35,22 @@ import { AppRuntimeModule } from './modules/app-runtime/app-runtime.module';
 import { AdminNotificationsModule } from './modules/admin-notifications/admin-notifications.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { HttpThrottlerGuard } from './common/guards/http-throttler.guard';
+import { REQUEST_RATE_LIMIT_POLICY } from './common/security/request-rate-limit.policy';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],
+    }),
+    ThrottlerModule.forRootAsync({
+      inject: [configuration.KEY],
+      useFactory: (config: ConfigType<typeof configuration>) => ({
+        throttlers: [REQUEST_RATE_LIMIT_POLICY.default],
+        storage: new ThrottlerStorageRedisService(config.redis.url),
+        errorMessage: '请求过于频繁，请稍后再试',
+      }),
     }),
     ScheduleModule.forRoot(),
     DatabaseModule,
@@ -71,6 +83,10 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     BootstrapModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: HttpThrottlerGuard,
+    },
     {
       provide: APP_FILTER,
       useClass: HttpExceptionFilter,

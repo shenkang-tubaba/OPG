@@ -1,6 +1,8 @@
 import { BadRequestException, Body, Controller, Param, Post, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { REQUEST_RATE_LIMIT_POLICY } from '../../common/security/request-rate-limit.policy';
 import { tenantControllerPaths } from '../../common/utils/controller-paths';
 import { DeveloperAuthorizationService } from '../developer-sdk/developer-authorization.service';
 import { DeveloperSdkAuthGuard } from '../developer-sdk/developer-sdk-auth.guard';
@@ -10,6 +12,7 @@ import { UploadService } from './upload.service';
 
 @ApiTags('Upload')
 @Controller(tenantControllerPaths('upload', true))
+@Throttle({ default: REQUEST_RATE_LIMIT_POLICY.upload })
 @UseGuards(DeveloperSdkAuthGuard)
 @ApiBearerAuth()
 export class UploadController {

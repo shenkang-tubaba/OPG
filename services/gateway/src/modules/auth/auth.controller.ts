@@ -16,11 +16,13 @@ import {
 } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { User as UserType } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { tenantControllerPaths } from '../../common/utils/controller-paths';
+import { REQUEST_RATE_LIMIT_POLICY } from '../../common/security/request-rate-limit.policy';
 import configuration from '../../config/configuration';
 import {
   ForgotPasswordDto,
@@ -82,6 +84,7 @@ export class AuthController {
 
   @Public()
   @Post('login')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.login })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '登录' })
   async login(@Body() body: { email?: string; username?: string; password?: string }, @Param('app') app?: string) {
@@ -95,6 +98,7 @@ export class AuthController {
 
   @Public()
   @Post('send-email-login-code')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.verification })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '发送邮箱登录验证码' })
   async sendEmailLoginCode(@Body() body: { email?: string }, @Param('app') app?: string) {
@@ -103,6 +107,7 @@ export class AuthController {
 
   @Public()
   @Post('login/email-code')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.login })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '邮箱验证码登录' })
   async loginWithEmailCode(@Body() body: LoginEmailCodeDto, @Param('app') app?: string) {
@@ -111,6 +116,7 @@ export class AuthController {
 
   @Public()
   @Post('register')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.verification })
   @ApiOperation({ summary: '注册' })
   async register(@Body() dto: RegisterDto, @Param('app') app?: string) {
     return this.authService.register(
@@ -171,6 +177,7 @@ export class AuthController {
 
   @Public()
   @Post('send-verification-code')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.verification })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '发送邮箱验证码' })
   async sendVerificationCode(@Body() dto: SendVerificationCodeDto & Record<string, unknown>, @Param('app') app?: string, @Query('app') queryApp?: string) {
@@ -186,6 +193,7 @@ export class AuthController {
 
   @Public()
   @Post('forgot-password')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.verification })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '忘记密码' })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
@@ -201,6 +209,7 @@ export class AuthController {
 
   @Public()
   @Post('send-sms-code')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.verification })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '发送短信验证码' })
   async sendSmsCode(@Body() body: { phone: string }, @Param('app') app?: string) {
@@ -209,6 +218,7 @@ export class AuthController {
 
   @Public()
   @Post('login/sms')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.login })
   @ApiOperation({ summary: '短信登录' })
   async loginWithSms(@Body() body: LoginSmsDto, @Param('app') app?: string) {
     return this.authService.loginWithSms(body.phone, body.code, this.resolveRouteAppSlug(app), body.invite_code);
@@ -216,6 +226,7 @@ export class AuthController {
 
   @Public()
   @Post('register/sms')
+  @Throttle({ default: REQUEST_RATE_LIMIT_POLICY.verification })
   @ApiOperation({ summary: '短信注册（兼容别名）' })
   async registerWithSms(@Body() body: LoginSmsDto, @Param('app') app?: string) {
     return this.authService.loginWithSms(body.phone, body.code, this.resolveRouteAppSlug(app), body.invite_code);

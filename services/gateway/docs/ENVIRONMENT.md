@@ -103,6 +103,13 @@
 | --- | --- | --- | --- |
 | `HTTP_JSON_LIMIT` | `20mb` | `main.ts` | 普通 JSON body 上限 |
 | `HTTP_MEDIA_JSON_LIMIT` | `45mb`（或 `HTTP_JSON_LIMIT`） | `main.ts` | 含媒体字段的 JSON 上限 |
+| `HTTP_WEBHOOK_BODY_LIMIT` | `2mb` | `main.ts` | 需要保留原始签名正文的支付 Webhook 上限 |
+| `HTTP_XML_LIMIT` | `1mb` | `main.ts` | XML 回调正文上限 |
+| `HTTP_RATE_LIMIT_PER_MINUTE` | `300` | `request-rate-limit.policy.ts` | 单 IP 全局 HTTP 请求上限 |
+| `AUTH_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | `request-rate-limit.policy.ts` | 登录类接口单 IP 上限 |
+| `AUTH_VERIFICATION_RATE_LIMIT_PER_10_MINUTES` | `5` | `request-rate-limit.policy.ts` | 验证码发送/注册类接口单 IP 上限 |
+| `UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | `request-rate-limit.policy.ts` | 上传接口单 IP 上限 |
+| `PUBLIC_WRITE_RATE_LIMIT_PER_MINUTE` | `30` | `request-rate-limit.policy.ts` | 公共写接口单 IP 上限 |
 | `GATEWAY_ACCESS_LOG` | 生产 `error`，其他 `all` | `logging.interceptor.ts` | 模式：`off` / `error` / `slow` / `sample` / `all` |
 | `AI_GATEWAY_ACCESS_LOG` | — | 同上 | `GATEWAY_ACCESS_LOG` 别名 |
 | `GATEWAY_ACCESS_LOG_SAMPLE_RATE` | `0` | 同上 | `sample` 模式采样率 0–1 |

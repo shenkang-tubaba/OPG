@@ -10,6 +10,11 @@ import { AppModule } from './app.module';
 import configuration from './config/configuration';
 import { PRISMA_CLIENT } from './config/database.module';
 import { createAppSlugAliasMiddleware } from './common/middleware/app-slug-alias.middleware';
+import {
+  captureRawBody,
+  DEFAULT_HTTP_JSON_BODY_LIMIT,
+  isSignedPaymentWebhookPath,
+} from './common/middleware/raw-body-policy';
 import { RuntimeSettingsService } from './modules/runtime-settings/runtime-settings.service';
 import { PlatformObservabilityService } from './modules/observability/platform-observability.service';
 
@@ -125,6 +130,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const appVersion = resolvePackageVersion();
   app.enableShutdownHooks();
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
   const bundledWeb = configureBundledWebAssets(app);
   const appConfig = app.get<ConfigType<typeof configuration>>(configuration.KEY);
   const runtimeSettings = app.get(RuntimeSettingsService, { strict: false });
@@ -163,24 +169,29 @@ async function bootstrap() {
     optionsSuccessStatus: 204,
   });
 
-  const jsonBodyLimit = process.env.HTTP_JSON_LIMIT || '20mb';
+  const jsonBodyLimit = process.env.HTTP_JSON_LIMIT || DEFAULT_HTTP_JSON_BODY_LIMIT;
   const mediaJsonBodyLimit = process.env.HTTP_MEDIA_JSON_LIMIT || process.env.HTTP_JSON_LIMIT || '45mb';
-  const captureRawBody = (req: any, _res: any, buf: Buffer) => {
-    if (buf?.length) {
-      req.rawBody = Buffer.from(buf);
-    }
-  };
-  const mediaJsonParser = json({ limit: mediaJsonBodyLimit, verify: captureRawBody });
+  const webhookBodyLimit = process.env.HTTP_WEBHOOK_BODY_LIMIT || '2mb';
+  const xmlBodyLimit = process.env.HTTP_XML_LIMIT || '1mb';
+  const mediaJsonParser = json({ limit: mediaJsonBodyLimit });
+  const webhookJsonParser = json({ limit: webhookBodyLimit, verify: captureRawBody });
+  const webhookUrlencodedParser = urlencoded({ extended: true, limit: webhookBodyLimit, verify: captureRawBody });
   app.use((req: any, res: any, next: any) => {
     const requestPath = String(req.path || req.url || '').split('?')[0];
+    if (req.method === 'POST' && isSignedPaymentWebhookPath(requestPath)) {
+      return webhookJsonParser(req, res, (jsonError: unknown) => {
+        if (jsonError) return next(jsonError);
+        return webhookUrlencodedParser(req, res, next);
+      });
+    }
     if (req.method === 'POST' && requestPath.includes('/videos/generations')) {
       return mediaJsonParser(req, res, next);
     }
     return next();
   });
-  app.use(json({ limit: jsonBodyLimit, verify: captureRawBody }));
-  app.use(urlencoded({ extended: true, limit: jsonBodyLimit, verify: captureRawBody }));
-  app.use(text({ type: ['application/xml', 'text/xml'], limit: jsonBodyLimit }));
+  app.use(json({ limit: jsonBodyLimit }));
+  app.use(urlencoded({ extended: true, limit: jsonBodyLimit }));
+  app.use(text({ type: ['application/xml', 'text/xml'], limit: xmlBodyLimit }));
   app.use(createAppSlugAliasMiddleware(app.get<PrismaClient>(PRISMA_CLIENT)));
 
   if (!bundledWeb) {
