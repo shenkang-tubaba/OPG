@@ -11,18 +11,12 @@ import { AppApiKeysService } from '../api-keys/app-api-keys.service';
 import { AuthService } from '../auth/auth.service';
 import { DeveloperAuthorizationService } from '../developer-sdk/developer-authorization.service';
 import { RealtimeEventsService } from './realtime-events.service';
+import { extractSocketAccessToken } from '../../common/security/websocket-security-policy';
 
 const MAX_SUBSCRIPTIONS_PER_CONNECTION = 64;
 
-function normalizeToken(value: unknown): string | null {
-  const token = String(value || '').trim();
-  if (!token) return null;
-  return token.toLowerCase().startsWith('bearer ') ? token.slice(7).trim() || null : token;
-}
-
 @WebSocketGateway({
   namespace: '/realtime',
-  cors: { origin: true, credentials: true },
 })
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
@@ -113,15 +107,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   private async authenticate(client: Socket) {
     const token =
-      normalizeToken(client.handshake.auth?.token) ||
-      normalizeToken(client.handshake.headers?.authorization) ||
-      normalizeToken(client.handshake.headers?.['x-opg-api-key']) ||
-      normalizeToken(client.handshake.query?.token) ||
-      normalizeToken(client.handshake.query?.key);
+      extractSocketAccessToken(
+        client.handshake.auth?.token,
+        client.handshake.headers?.authorization,
+        client.handshake.headers?.['x-opg-api-key'],
+        client.handshake.headers?.apikey,
+      );
     if (!token) {
       throw new Error('Authentication required');
     }
-    const appHint = String(client.handshake.auth?.app || client.handshake.query?.app || '').trim() || undefined;
+    const appHint = String(client.handshake.auth?.app || '').trim() || undefined;
     if (token.startsWith('opg_dev_')) {
       return this.developerAuthorizationService.authenticateGrant(token, appHint);
     }

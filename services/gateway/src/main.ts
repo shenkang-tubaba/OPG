@@ -10,6 +10,9 @@ import { AppModule } from './app.module';
 import configuration from './config/configuration';
 import { PRISMA_CLIENT } from './config/database.module';
 import { createAppSlugAliasMiddleware } from './common/middleware/app-slug-alias.middleware';
+import { createCorsOriginCallback } from './common/security/cors-origin-policy';
+import { SecureSocketIoAdapter } from './common/security/secure-socket-io.adapter';
+import { resolveWebSocketMaxPayloadBytes } from './common/security/websocket-security-policy';
 import {
   captureRawBody,
   DEFAULT_HTTP_JSON_BODY_LIMIT,
@@ -141,28 +144,18 @@ async function bootstrap() {
   const configuredOrigins = (dbCorsOrigins.length > 0 ? dbCorsOrigins : appConfig.cors.origins)
     .map((origin) => origin.trim())
     .filter(Boolean);
-  const allowAllOrigins = configuredOrigins.includes('*');
-  const allowedOriginSet = new Set(configuredOrigins.filter((origin) => origin !== '*'));
-  const trustedOriginPattern =
-    /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|.*\.local|.*\.sslip\.io)(:\d+)?$/i;
+  const allowDevelopmentOrigins = !['production', 'prod'].includes(String(appConfig.env || '').trim().toLowerCase());
+  app.useWebSocketAdapter(new SecureSocketIoAdapter(
+    app,
+    configuredOrigins,
+    allowDevelopmentOrigins,
+    resolveWebSocketMaxPayloadBytes(process.env.WEBSOCKET_MAX_HTTP_BUFFER_SIZE),
+  ));
 
   // Register CORS before body parsers and business middleware so OPTIONS
   // preflight requests never fall through to route matching.
   app.enableCors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-
-      const normalized = origin.trim();
-      if (allowAllOrigins || allowedOriginSet.has(normalized) || trustedOriginPattern.test(normalized)) {
-        callback(null, true);
-        return;
-      }
-
-      callback(null, false);
-    },
+    origin: createCorsOriginCallback(configuredOrigins, allowDevelopmentOrigins),
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With', 'X-Admin-Key', 'X-Feedback-Admin-Key'],
     credentials: true,

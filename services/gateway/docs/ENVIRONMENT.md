@@ -110,6 +110,7 @@
 | `AUTH_VERIFICATION_RATE_LIMIT_PER_10_MINUTES` | `5` | `request-rate-limit.policy.ts` | 验证码发送/注册类接口单 IP 上限 |
 | `UPLOAD_RATE_LIMIT_PER_MINUTE` | `10` | `request-rate-limit.policy.ts` | 上传接口单 IP 上限 |
 | `PUBLIC_WRITE_RATE_LIMIT_PER_MINUTE` | `30` | `request-rate-limit.policy.ts` | 公共写接口单 IP 上限 |
+| `WEBSOCKET_MAX_HTTP_BUFFER_SIZE` | `1048576` | `secure-socket-io.adapter.ts` | Socket.IO 单消息字节上限，允许 16KB 到 5MB |
 | `GATEWAY_ACCESS_LOG` | 生产 `error`，其他 `all` | `logging.interceptor.ts` | 模式：`off` / `error` / `slow` / `sample` / `all` |
 | `AI_GATEWAY_ACCESS_LOG` | — | 同上 | `GATEWAY_ACCESS_LOG` 别名 |
 | `GATEWAY_ACCESS_LOG_SAMPLE_RATE` | `0` | 同上 | `sample` 模式采样率 0–1 |
