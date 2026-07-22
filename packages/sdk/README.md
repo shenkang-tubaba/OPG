@@ -14,6 +14,11 @@ const customer = await opg.connectors.invoke("crm", "lookup", {
 });
 ```
 
+The shared transport applies a 30-second default timeout, retries transient
+failures for safe methods, and exposes structured `OpgApiError` /
+`OpgTransportError` diagnostics. Writes are only retried when the caller opts
+in with an idempotency key.
+
 ## Local Login
 
 ```bash
@@ -31,6 +36,25 @@ npx -y @jamba/opg-cli login --app your-app
 - `OPG_APP_SLUG`: App slug owned by the current tenant
 - `OPG_API_KEY`: Optional explicit Developer Grant (`opg_dev_...`) for CI or non-interactive server runtimes
 - `OPG_PLATFORM_TOKEN`: Platform admin JWT for global control-plane operations
+
+Multiple app grants are stored independently inside one local profile. You can
+also configure transport behavior directly:
+
+```ts
+const opg = createOpgClient({
+  baseUrl: process.env.OPG_BASE_URL!,
+  app: "demo",
+  apiKey: process.env.OPG_API_KEY!,
+  timeoutMs: 20_000,
+  retry: { maxAttempts: 3 },
+});
+
+await opg.request("/operations", {
+  method: "POST",
+  body: { action: "sync" },
+  idempotencyKey: "sync-2026-07-22",
+});
+```
 
 ## Codex
 
@@ -175,7 +199,8 @@ await platform.apps.admins.updatePermissions(appId, String((admins as any).items
 });
 ```
 
-Available app data namespaces include `agents`, `feedbacks`, `analytics`,
+Available app data namespaces include `agents`, `feedbacks`, `forms`,
+`acquisition`, `analytics`,
 `aiUsage`, `payments`, `email`, `site`, `redeem`, `admins`, `schema`,
 `functions`, `workflows`, `blocks`, `connectors`, and `build`.
 
@@ -187,6 +212,10 @@ Platform-wide namespaces include `observability`, `notifications`, `tasks`,
 `developerAuthorizations`, `storageProviders`, `smtpProviders`,
 `integrationApiKeys`, `payments`, `sms`, `oauth`, `email`, `proxies`, `ai`,
 and `agents`.
+
+App-scoped runtime namespaces include `auth`, `users`, `payments`, `site`,
+`acquisition`, `voices`, and `realtime` in addition to AI, uploads, video,
+database, data, forms, functions, workflows, connectors, and agents.
 
 ## Database Workspace
 

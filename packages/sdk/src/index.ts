@@ -8,6 +8,16 @@ export type OpgClientOptions = {
   apiKey?: OpgApiKeyProvider;
   platformToken?: OpgApiKeyProvider;
   fetch?: typeof fetch;
+  timeoutMs?: number;
+  retry?: false | OpgRetryOptions;
+};
+
+export type OpgRetryOptions = {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  methods?: string[];
+  statuses?: number[];
 };
 
 export type OpgLocalConfigOptions = {
@@ -25,6 +35,9 @@ export type OpgRequestOptions = {
   body?: unknown;
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  timeoutMs?: number;
+  retry?: false | OpgRetryOptions;
+  idempotencyKey?: string;
 };
 
 export type OpgAgentRunInput = {
@@ -114,6 +127,20 @@ export type OpgRealtimeSubscribeOptions = {
   transports?: Array<'websocket' | 'polling'>;
 };
 
+export type OpgWaitOptions = {
+  intervalMs?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+};
+
+export type OpgApiErrorDetails = {
+  code?: string;
+  requestId?: string;
+  headers?: Record<string, string>;
+  retryAfterMs?: number;
+  responseBody?: unknown;
+};
+
 type OpgClientInternals = {
   request<T = unknown>(path: string, options?: OpgRequestOptions): Promise<T>;
   stream(path: string, options?: OpgRequestOptions): AsyncIterable<string>;
@@ -150,6 +177,7 @@ export type OpgPlatformClient = {
       deleteDefaultModelSlot(appId: string, slotKey: string): Promise<Record<string, unknown>>;
       pointsSettings(appId: string): Promise<Record<string, unknown>>;
       updatePointsSettings(appId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      grantPoints(appId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
     };
     agents: {
       listBindings(appId: string): Promise<Record<string, unknown>>;
@@ -176,6 +204,20 @@ export type OpgPlatformClient = {
       updateQuestion(appId: string, formId: string, questionId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
       deleteQuestion(appId: string, formId: string, questionId: string): Promise<Record<string, unknown>>;
       reorderQuestions(appId: string, formId: string, questionIds: string[]): Promise<Record<string, unknown>>;
+      createLogicRule(appId: string, formId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      updateLogicRule(appId: string, formId: string, ruleId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      deleteLogicRule(appId: string, formId: string, ruleId: string): Promise<Record<string, unknown>>;
+      createAction(appId: string, formId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      updateAction(appId: string, formId: string, actionId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      deleteAction(appId: string, formId: string, actionId: string): Promise<Record<string, unknown>>;
+    };
+    acquisition: {
+      sourceOptions(appId: string): Promise<Record<string, unknown>>;
+      createSourceOption(appId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      updateSourceOption(appId: string, optionId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      deleteSourceOption(appId: string, optionId: string): Promise<Record<string, unknown>>;
+      summary(appId: string, query?: OpgQuery): Promise<Record<string, unknown>>;
+      users(appId: string, query?: OpgQuery): Promise<Record<string, unknown>>;
     };
     analytics: {
       business(appId: string, query?: OpgQuery): Promise<Record<string, unknown>>;
@@ -244,11 +286,18 @@ export type OpgPlatformClient = {
       updateStatus(appId: string, adminUserId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
       remove(appId: string, adminUserId: string): Promise<Record<string, unknown>>;
     };
+    users: {
+      deactivate(appId: string, userId: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+      restore(appId: string, userId: string): Promise<Record<string, unknown>>;
+      unlinkPhone(appId: string, userId: string): Promise<Record<string, unknown>>;
+      unlinkEmail(appId: string, userId: string): Promise<Record<string, unknown>>;
+    };
     schema: {
       manifest(appId: string): Promise<Record<string, unknown>>;
       createTable(appId: string, input: OpgSchemaTableInput): Promise<Record<string, unknown>>;
       addColumn(appId: string, table: string, input: OpgSchemaColumnInput): Promise<Record<string, unknown>>;
       dropTable(appId: string, table: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+      upsertPolicy(appId: string, table: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
     };
     functions: {
       list(appId: string): Promise<Record<string, unknown>>;
@@ -305,6 +354,8 @@ export type OpgPlatformClient = {
     appOverview(appId: string, query?: OpgQuery): Promise<Record<string, unknown>>;
     refreshApp(appId: string): Promise<Record<string, unknown>>;
     applyTemplate(appId: string, templateKey: string): Promise<Record<string, unknown>>;
+    functionStatus(): Promise<Record<string, unknown>>;
+    workflowStatus(): Promise<Record<string, unknown>>;
   };
   observability: {
     runtime(): Promise<Record<string, unknown>>;
@@ -361,12 +412,21 @@ export type OpgPlatformClient = {
   };
   payments: {
     methods: OpgCrudClient;
+    orders(query?: OpgQuery): Promise<Record<string, unknown>>;
+    refundOrder(orderId: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    testOneTime(input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    testWechatOneTime(input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    testRecurring(input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    testFullFlow(input?: Record<string, unknown>): Promise<Record<string, unknown>>;
   };
   sms: {
     providerCatalog(): Promise<Record<string, unknown>>;
     providers: OpgCrudClient;
     signatures: OpgCrudClient;
     templates: OpgCrudClient;
+    events(query?: OpgQuery): Promise<Record<string, unknown>>;
+    summary(query?: OpgQuery): Promise<Record<string, unknown>>;
+    testSend(appId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   };
   oauth: {
     wechatOpenApps: OpgCrudClient;
@@ -406,6 +466,14 @@ export type OpgPlatformClient = {
     usageSummary(query?: OpgQuery): Promise<Record<string, unknown>>;
     usageBreakdown(query?: OpgQuery): Promise<Record<string, unknown>>;
     usageLogs(query?: OpgQuery): Promise<Record<string, unknown>>;
+    voices: {
+      list(query?: OpgQuery): Promise<Record<string, unknown>>;
+      createMigrationJob(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      getMigrationJob(jobId: string): Promise<Record<string, unknown>>;
+      migrate(voiceId: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+      retryClone(voiceId: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+      activateMapping(voiceId: string, mappingId: string): Promise<Record<string, unknown>>;
+    };
   };
   agents: {
     list(): Promise<Record<string, unknown>>;
@@ -448,6 +516,34 @@ export type OpgClient = OpgClientInternals & {
     transcriptions(input: OpgMultipartInput): Promise<Record<string, unknown>>;
     translations(input: OpgMultipartInput): Promise<Record<string, unknown>>;
   };
+  auth: {
+    login(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    register(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    refresh(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    logout(input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    me(): Promise<Record<string, unknown>>;
+    providers(): Promise<Record<string, unknown>>;
+  };
+  users: {
+    me(): Promise<Record<string, unknown>>;
+    updateMe(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    points(): Promise<Record<string, unknown>>;
+    identities(): Promise<Record<string, unknown>>;
+    devices(): Promise<Record<string, unknown>>;
+    revokeDevice(deviceId: string): Promise<Record<string, unknown>>;
+    entitlements(): Promise<Record<string, unknown>>;
+    notifications(query?: OpgQuery): Promise<Record<string, unknown>>;
+    markNotificationRead(notificationId: string): Promise<Record<string, unknown>>;
+    markAllNotificationsRead(): Promise<Record<string, unknown>>;
+    feedback(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    feedbacks(query?: OpgQuery): Promise<Record<string, unknown>>;
+    feedbackDetail(feedbackId: string): Promise<Record<string, unknown>>;
+    feedbackComment(feedbackId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    apiKeys(): Promise<Record<string, unknown>>;
+    createApiKey(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    revokeApiKey(keyId: string): Promise<Record<string, unknown>>;
+    behaviorEvent(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  };
   agents: {
     list(): Promise<Record<string, unknown>>;
     meta(slug: string): Promise<Record<string, unknown>>;
@@ -466,7 +562,35 @@ export type OpgClient = OpgClientInternals & {
     generate(input: OpgVideoTaskInput): Promise<Record<string, unknown>>;
     generateAsync(input: OpgVideoTaskInput): Promise<Record<string, unknown>>;
     queryTask(input: Record<string, unknown>): Promise<Record<string, unknown>>;
-    wait(taskId: string, options?: { intervalMs?: number; timeoutMs?: number }): Promise<Record<string, unknown>>;
+    wait(taskId: string, options?: OpgWaitOptions): Promise<Record<string, unknown>>;
+  };
+  voices: {
+    clone(file: Blob, fields?: Record<string, string>): Promise<Record<string, unknown>>;
+    list(query?: OpgQuery): Promise<Record<string, unknown>>;
+    get(voiceId: string): Promise<Record<string, unknown>>;
+    delete(voiceId: string): Promise<Record<string, unknown>>;
+  };
+  payments: {
+    products(): Promise<Record<string, unknown>>;
+    product(productId: string): Promise<Record<string, unknown>>;
+    checkout(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    order(outTradeNo: string): Promise<Record<string, unknown>>;
+    verifyAppleTransaction(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    restoreApplePurchases(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    subscription(): Promise<Record<string, unknown>>;
+  };
+  site: {
+    config(): Promise<Record<string, unknown>>;
+    downloads(): Promise<Record<string, unknown>>;
+    cookies(): Promise<Record<string, unknown>>;
+    newsletter(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    contact(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    cookieConsent(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  };
+  acquisition: {
+    sourceOptions(): Promise<Record<string, unknown>>;
+    currentUserSource(): Promise<Record<string, unknown>>;
+    setCurrentUserSource(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   };
   usage: {
     aiLogs(query?: { page?: number; limit?: number }): Promise<Record<string, unknown>>;
@@ -502,6 +626,7 @@ export type OpgClient = OpgClientInternals & {
     invoke(connector: string, action: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   };
   realtime: {
+    status(): Promise<Record<string, unknown>>;
     subscribe(
       channel: string,
       handler: (event: OpgRealtimeEnvelope) => void,
@@ -525,11 +650,10 @@ export function createOpgClient(options: OpgClientOptions): OpgClient {
     if (!apiBaseUrl) {
       throw new Error('OPG app is required for app-scoped SDK calls. Use createOpgPlatformClient for global platform operations.');
     }
-    const response = await rawRequest(fetchImpl, apiBaseUrl, path, options.apiKey, requestOptions);
+    const response = await rawRequest(fetchImpl, apiBaseUrl, path, options.apiKey, requestOptions, options);
     const contentType = response.headers.get('content-type') || '';
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new OpgApiError(response.status, resolveErrorMessage(text, response.statusText), text);
+      throw await createOpgApiError(response);
     }
     if (contentType.includes('application/json')) {
       return (await response.json()) as T;
@@ -541,10 +665,12 @@ export function createOpgClient(options: OpgClientOptions): OpgClient {
     if (!apiBaseUrl) {
       throw new Error('OPG app is required for app-scoped SDK calls. Use createOpgPlatformClient for global platform operations.');
     }
-    const response = await rawRequest(fetchImpl, apiBaseUrl, path, options.apiKey, requestOptions);
+    const response = await rawRequest(fetchImpl, apiBaseUrl, path, options.apiKey, {
+      ...requestOptions,
+      timeoutMs: requestOptions.timeoutMs ?? 0,
+    }, options);
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new OpgApiError(response.status, resolveErrorMessage(text, response.statusText), text);
+      throw await createOpgApiError(response);
     }
     if (!response.body) {
       return;
@@ -595,17 +721,23 @@ export function createOpgClient(options: OpgClientOptions): OpgClient {
     });
     const eventName = subscribeOptions.event || 'opg.event';
     socket.on(eventName, handler);
-    await waitForSocketConnect(socket, subscribeOptions.timeoutMs || 10000);
-    const ack = await socket.timeout(subscribeOptions.timeoutMs || 10000).emitWithAck('subscribe', { channel });
-    if (!ack?.ok) {
+    try {
+      await waitForSocketConnect(socket, subscribeOptions.timeoutMs || 10000);
+      const ack = await socket.timeout(subscribeOptions.timeoutMs || 10000).emitWithAck('subscribe', { channel });
+      if (!ack?.ok) {
+        throw new Error(ack?.message || ack?.code || `Failed to subscribe to ${channel}`);
+      }
+    } catch (error) {
+      socket.off(eventName, handler);
       socket.close();
-      throw new Error(ack?.message || ack?.code || `Failed to subscribe to ${channel}`);
+      throw error;
     }
     return {
       channel,
       socket,
       close: () => {
         socket.emit('unsubscribe', { channel });
+        socket.off(eventName, handler);
         socket.close();
       },
     };
@@ -639,6 +771,34 @@ export function createOpgClient(options: OpgClientOptions): OpgClient {
       transcriptions: (input) => request('/audio/transcriptions', { method: 'POST', body: input }),
       translations: (input) => request('/audio/translations', { method: 'POST', body: input }),
     },
+    auth: {
+      login: (input) => request('/auth/login', { method: 'POST', body: input }),
+      register: (input) => request('/auth/register', { method: 'POST', body: input }),
+      refresh: (input) => request('/auth/refresh', { method: 'POST', body: input }),
+      logout: (input = {}) => request('/auth/logout', { method: 'POST', body: input }),
+      me: () => request('/auth/me'),
+      providers: () => request('/auth/login/providers'),
+    },
+    users: {
+      me: () => request('/users/me'),
+      updateMe: (input) => request('/users/me', { method: 'PUT', body: input }),
+      points: () => request('/users/me/points'),
+      identities: () => request('/users/me/identities'),
+      devices: () => request('/users/me/devices'),
+      revokeDevice: (deviceId) => request(`/users/me/devices/${encodeURIComponent(deviceId)}/revoke`, { method: 'POST', body: {} }),
+      entitlements: () => request('/users/me/entitlements'),
+      notifications: (query) => request('/users/me/notifications', { query }),
+      markNotificationRead: (notificationId) => request(`/users/me/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST', body: {} }),
+      markAllNotificationsRead: () => request('/users/me/notifications/read-all', { method: 'POST', body: {} }),
+      feedback: (input) => request('/users/me/feedback', { method: 'POST', body: input }),
+      feedbacks: (query) => request('/users/me/feedbacks', { query }),
+      feedbackDetail: (feedbackId) => request(`/users/me/feedbacks/${encodeURIComponent(feedbackId)}`),
+      feedbackComment: (feedbackId, input) => request(`/users/me/feedbacks/${encodeURIComponent(feedbackId)}/comments`, { method: 'POST', body: input }),
+      apiKeys: () => request('/users/me/api-keys'),
+      createApiKey: (input) => request('/users/me/api-keys', { method: 'POST', body: input }),
+      revokeApiKey: (keyId) => request(`/users/me/api-keys/${encodeURIComponent(keyId)}/revoke`, { method: 'POST', body: {} }),
+      behaviorEvent: (input) => request('/users/me/behavior-events', { method: 'POST', body: input }),
+    },
     agents: {
       list: () => request('/agent'),
       meta: (slug) => request(`/agent/${encodeURIComponent(slug)}/meta`),
@@ -658,6 +818,34 @@ export function createOpgClient(options: OpgClientOptions): OpgClient {
       generateAsync: (input) => request('/videos/generations/async', { method: 'POST', body: input }),
       queryTask: (input) => request('/videos/generations/tasks/query', { method: 'POST', body: input }),
       wait: (taskId, waitOptions) => waitForVideoTask(request, taskId, waitOptions),
+    },
+    voices: {
+      clone: (file, fields) => uploadBlob(request, '/audio/voices/clone', file, fields),
+      list: (query) => request('/audio/voices', { query }),
+      get: (voiceId) => request(`/audio/voices/${encodeURIComponent(voiceId)}`),
+      delete: (voiceId) => request(`/audio/voices/${encodeURIComponent(voiceId)}`, { method: 'DELETE' }),
+    },
+    payments: {
+      products: () => request('/payments/products'),
+      product: (productId) => request(`/payments/products/${encodeURIComponent(productId)}`),
+      checkout: (input) => request('/payments/orders/checkout', { method: 'POST', body: input }),
+      order: (outTradeNo) => request(`/payments/orders/${encodeURIComponent(outTradeNo)}`),
+      verifyAppleTransaction: (input) => request('/payments/apple/transactions/verify', { method: 'POST', body: input }),
+      restoreApplePurchases: (input) => request('/payments/apple/restore', { method: 'POST', body: input }),
+      subscription: () => request('/payments/subscriptions/me'),
+    },
+    site: {
+      config: () => request('/site/config'),
+      downloads: () => request('/site/downloads'),
+      cookies: () => request('/site/cookies'),
+      newsletter: (input) => request('/site/newsletter', { method: 'POST', body: input }),
+      contact: (input) => request('/site/contact', { method: 'POST', body: input }),
+      cookieConsent: (input) => request('/site/cookie-consent', { method: 'POST', body: input }),
+    },
+    acquisition: {
+      sourceOptions: () => request('/acquisition/source-options'),
+      currentUserSource: () => request('/users/me/acquisition-source'),
+      setCurrentUserSource: (input) => request('/users/me/acquisition-source', { method: 'POST', body: input }),
     },
     usage: {
       aiLogs: (query) => request('/users/me/ai-usage-logs', { query }),
@@ -688,6 +876,7 @@ export function createOpgClient(options: OpgClientOptions): OpgClient {
         request<Record<string, unknown>>(`/connectors/${encodeURIComponent(connector)}/actions/${encodeURIComponent(action)}/invoke`, { method: 'POST', body: input }),
     },
     realtime: {
+      status: () => request('/realtime/status'),
       subscribe: subscribeRealtime,
     },
   };
@@ -704,11 +893,10 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
   const token = options.platformToken || options.apiKey;
 
   const request = async <T = unknown>(path: string, requestOptions: OpgRequestOptions = {}): Promise<T> => {
-    const response = await rawRequest(fetchImpl, platformBaseUrl, path, token, requestOptions);
+    const response = await rawRequest(fetchImpl, platformBaseUrl, path, token, requestOptions, options);
     const contentType = response.headers.get('content-type') || '';
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new OpgApiError(response.status, resolveErrorMessage(text, response.statusText), text);
+      throw await createOpgApiError(response);
     }
     if (contentType.includes('application/json')) {
       return (await response.json()) as T;
@@ -771,6 +959,7 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
           request(appPath(appId, `/ai/default-model-slots/${encodeURIComponent(slotKey)}`), { method: 'DELETE' }),
         pointsSettings: (appId) => request(appPath(appId, '/ai/points-settings')),
         updatePointsSettings: (appId, input) => request(appPath(appId, '/ai/points-settings'), { method: 'PUT', body: input }),
+        grantPoints: (appId, input) => request(appPath(appId, '/ai/points/grant'), { method: 'POST', body: input }),
       },
       agents: {
         listBindings: (appId) => request(appPath(appId, '/agents')),
@@ -805,6 +994,26 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
           request(appPath(appId, `/forms/${encodeURIComponent(formId)}/questions/${encodeURIComponent(questionId)}`), { method: 'DELETE' }),
         reorderQuestions: (appId, formId, questionIds) =>
           request(appPath(appId, `/forms/${encodeURIComponent(formId)}/questions/reorder`), { method: 'PATCH', body: { question_ids: questionIds } }),
+        createLogicRule: (appId, formId, input) =>
+          request(appPath(appId, `/forms/${encodeURIComponent(formId)}/logic-rules`), { method: 'POST', body: input }),
+        updateLogicRule: (appId, formId, ruleId, input) =>
+          request(appPath(appId, `/forms/${encodeURIComponent(formId)}/logic-rules/${encodeURIComponent(ruleId)}`), { method: 'PATCH', body: input }),
+        deleteLogicRule: (appId, formId, ruleId) =>
+          request(appPath(appId, `/forms/${encodeURIComponent(formId)}/logic-rules/${encodeURIComponent(ruleId)}`), { method: 'DELETE' }),
+        createAction: (appId, formId, input) =>
+          request(appPath(appId, `/forms/${encodeURIComponent(formId)}/actions`), { method: 'POST', body: input }),
+        updateAction: (appId, formId, actionId, input) =>
+          request(appPath(appId, `/forms/${encodeURIComponent(formId)}/actions/${encodeURIComponent(actionId)}`), { method: 'PATCH', body: input }),
+        deleteAction: (appId, formId, actionId) =>
+          request(appPath(appId, `/forms/${encodeURIComponent(formId)}/actions/${encodeURIComponent(actionId)}`), { method: 'DELETE' }),
+      },
+      acquisition: {
+        sourceOptions: (appId) => request(appPath(appId, '/acquisition/source-options')),
+        createSourceOption: (appId, input) => request(appPath(appId, '/acquisition/source-options'), { method: 'POST', body: input }),
+        updateSourceOption: (appId, optionId, input) => request(appPath(appId, `/acquisition/source-options/${encodeURIComponent(optionId)}`), { method: 'PATCH', body: input }),
+        deleteSourceOption: (appId, optionId) => request(appPath(appId, `/acquisition/source-options/${encodeURIComponent(optionId)}`), { method: 'DELETE' }),
+        summary: (appId, query) => request(appPath(appId, '/acquisition/summary'), { query }),
+        users: (appId, query) => request(appPath(appId, '/acquisition/users'), { query }),
       },
       analytics: {
         business: (appId, query) => request(appPath(appId, '/business-analytics'), { query }),
@@ -891,6 +1100,12 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
           request(appPath(appId, `/admins/${encodeURIComponent(adminUserId)}/status`), { method: 'PATCH', body: input }),
         remove: (appId, adminUserId) => request(appPath(appId, `/admins/${encodeURIComponent(adminUserId)}`), { method: 'DELETE' }),
       },
+      users: {
+        deactivate: (appId, userId, input = {}) => request(appPath(appId, `/users/${encodeURIComponent(userId)}/deactivate`), { method: 'POST', body: input }),
+        restore: (appId, userId) => request(appPath(appId, `/users/${encodeURIComponent(userId)}/restore`), { method: 'POST', body: {} }),
+        unlinkPhone: (appId, userId) => request(appPath(appId, `/users/${encodeURIComponent(userId)}/unlink-phone`), { method: 'POST', body: {} }),
+        unlinkEmail: (appId, userId) => request(appPath(appId, `/users/${encodeURIComponent(userId)}/unlink-email`), { method: 'POST', body: {} }),
+      },
       schema: {
         manifest: (appId) => request(appPath(appId, '/schema/manifest')),
         createTable: (appId, input) => request(appPath(appId, '/schema/tables'), { method: 'POST', body: input }),
@@ -898,6 +1113,8 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
           request(appPath(appId, `/schema/tables/${encodeURIComponent(table)}/columns`), { method: 'POST', body: input }),
         dropTable: (appId, table, input = {}) =>
           request(appPath(appId, `/schema/tables/${encodeURIComponent(table)}`), { method: 'DELETE', body: input }),
+        upsertPolicy: (appId, table, input) =>
+          request(appPath(appId, `/schema/tables/${encodeURIComponent(table)}/policies`), { method: 'POST', body: input }),
       },
       functions: {
         list: (appId) => request(appPath(appId, '/functions')),
@@ -960,6 +1177,8 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
       refreshApp: (appId) => request(appPath(appId, '/runtime/refresh'), { method: 'POST', body: {} }),
       applyTemplate: (appId, templateKey) =>
         request(appPath(appId, `/runtime/templates/${encodeURIComponent(templateKey)}/apply`), { method: 'POST', body: {} }),
+      functionStatus: () => request('/functions/runtime/status'),
+      workflowStatus: () => request('/workflows/runtime/status'),
     },
     observability: {
       runtime: () => request('/observability/runtime'),
@@ -1020,12 +1239,21 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
     },
     payments: {
       methods: crud('/payments/methods'),
+      orders: (query) => request('/payments/orders', { query }),
+      refundOrder: (orderId, input = {}) => request(`/payments/orders/${encodeURIComponent(orderId)}/refund`, { method: 'POST', body: input }),
+      testOneTime: (input = {}) => request('/payments/testing/one-time', { method: 'POST', body: input }),
+      testWechatOneTime: (input = {}) => request('/payments/testing/wechat/one-time', { method: 'POST', body: input }),
+      testRecurring: (input = {}) => request('/payments/testing/recurring', { method: 'POST', body: input }),
+      testFullFlow: (input = {}) => request('/payments/testing/full-flow', { method: 'POST', body: input }),
     },
     sms: {
       providerCatalog: () => request('/sms/provider-catalog'),
       providers: crud('/sms/providers'),
       signatures: crud('/sms/signatures'),
       templates: crud('/sms/templates'),
+      events: (query) => request('/sms/events', { query }),
+      summary: (query) => request('/sms/summary', { query }),
+      testSend: (appId, input) => request(appPath(appId, '/sms/test-send'), { method: 'POST', body: input }),
     },
     oauth: {
       wechatOpenApps: crud('/wechat/open-apps'),
@@ -1072,6 +1300,14 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
       usageSummary: (query) => request('/ai/usage/summary', { query }),
       usageBreakdown: (query) => request('/ai/usage/breakdown', { query }),
       usageLogs: (query) => request('/ai/usage/logs', { query }),
+      voices: {
+        list: (query) => request('/ai/voices', { query }),
+        createMigrationJob: (input) => request('/ai/voices/migration-jobs', { method: 'POST', body: input }),
+        getMigrationJob: (jobId) => request(`/ai/voices/migration-jobs/${encodeURIComponent(jobId)}`),
+        migrate: (voiceId, input = {}) => request(`/ai/voices/${encodeURIComponent(voiceId)}/migrate`, { method: 'POST', body: input }),
+        retryClone: (voiceId, input = {}) => request(`/ai/voices/${encodeURIComponent(voiceId)}/retry-clone`, { method: 'POST', body: input }),
+        activateMapping: (voiceId, mappingId) => request(`/ai/voices/${encodeURIComponent(voiceId)}/activate-mapping`, { method: 'POST', body: { mapping_id: mappingId } }),
+      },
     },
     agents: {
       list: () => request('/agents'),
@@ -1116,6 +1352,7 @@ export async function readOpgLocalConfig(options: OpgLocalConfigOptions = {}): P
       app?: string;
       apiKey?: string;
       platformToken?: string;
+      apps?: Record<string, { apiKey?: string }>;
     }>;
   }>('.opg/credentials.json', {});
   const envFile = await readOpgDotEnvLocal(cwd);
@@ -1123,7 +1360,9 @@ export async function readOpgLocalConfig(options: OpgLocalConfigOptions = {}): P
   const credentialProfile = credentials.profiles?.[profile] || {};
   const baseUrl = process.env.OPG_BASE_URL || envFile.OPG_BASE_URL || local.baseUrl || credentialProfile.baseUrl || '';
   const app = process.env.OPG_APP_SLUG || envFile.OPG_APP_SLUG || local.app || credentialProfile.app || '';
-  const apiKey = process.env.OPG_API_KEY || envFile.OPG_API_KEY || credentialProfile.apiKey || local.apiKey || '';
+  const appCredential = app ? credentialProfile.apps?.[app] : undefined;
+  const legacyApiKey = credentialProfile.app === app ? credentialProfile.apiKey : undefined;
+  const apiKey = process.env.OPG_API_KEY || envFile.OPG_API_KEY || appCredential?.apiKey || legacyApiKey || local.apiKey || '';
   const platformToken = process.env.OPG_PLATFORM_TOKEN || envFile.OPG_PLATFORM_TOKEN || credentialProfile.platformToken || local.platformToken || '';
 
   if (!baseUrl) {
@@ -1180,9 +1419,27 @@ export class OpgApiError extends Error {
     readonly status: number,
     message: string,
     readonly responseText: string,
+    readonly details: OpgApiErrorDetails = {},
   ) {
     super(message);
     this.name = 'OpgApiError';
+  }
+
+  get code() { return this.details.code; }
+  get requestId() { return this.details.requestId; }
+  get headers() { return this.details.headers || {}; }
+  get retryAfterMs() { return this.details.retryAfterMs; }
+  get responseBody() { return this.details.responseBody; }
+}
+
+export class OpgTransportError extends Error {
+  constructor(
+    message: string,
+    readonly code: 'REQUEST_TIMEOUT' | 'NETWORK_ERROR',
+    readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'OpgTransportError';
   }
 }
 
@@ -1192,6 +1449,7 @@ async function rawRequest(
   path: string,
   apiKey: OpgApiKeyProvider | undefined,
   options: OpgRequestOptions,
+  clientOptions: Pick<OpgClientOptions, 'timeoutMs' | 'retry'>,
 ) {
   const url = new URL(`${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`);
   Object.entries(options.query || {}).forEach(([key, value]) => {
@@ -1205,6 +1463,9 @@ async function rawRequest(
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
+  if (options.idempotencyKey) {
+    headers['Idempotency-Key'] = options.idempotencyKey;
+  }
 
   let body: BodyInit | undefined;
   if (options.body !== undefined) {
@@ -1216,11 +1477,131 @@ async function rawRequest(
     }
   }
 
-  return fetchImpl(url, {
-    method: options.method || (body ? 'POST' : 'GET'),
-    headers,
-    body,
-    signal: options.signal,
+  const method = String(options.method || (body ? 'POST' : 'GET')).toUpperCase();
+  const retry = resolveRetryOptions(options.retry ?? clientOptions.retry, method, !!options.idempotencyKey);
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? clientOptions.timeoutMs, 30_000);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+    const attemptSignal = createAttemptSignal(options.signal, timeoutMs);
+    try {
+      const response = await fetchImpl(url, {
+        method,
+        headers,
+        body,
+        signal: attemptSignal.signal,
+      });
+      if (attempt < retry.maxAttempts && retry.statuses.has(response.status)) {
+        await response.body?.cancel().catch(() => undefined);
+        await abortableDelay(resolveRetryDelayMs(response, retry, attempt), options.signal);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (options.signal?.aborted) {
+        throw options.signal.reason || error;
+      }
+      lastError = attemptSignal.timedOut()
+        ? new OpgTransportError(`OPG request timed out after ${timeoutMs}ms`, 'REQUEST_TIMEOUT', error)
+        : new OpgTransportError('OPG network request failed', 'NETWORK_ERROR', error);
+      if (attempt >= retry.maxAttempts) {
+        throw lastError;
+      }
+      await abortableDelay(resolveRetryDelayMs(undefined, retry, attempt), options.signal);
+    }
+  }
+
+  throw lastError || new OpgTransportError('OPG network request failed', 'NETWORK_ERROR');
+}
+
+type ResolvedRetryOptions = {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  statuses: Set<number>;
+};
+
+function resolveRetryOptions(value: false | OpgRetryOptions | undefined, method: string, hasIdempotencyKey: boolean): ResolvedRetryOptions {
+  const configuredMethods = new Set((value && value.methods || ['GET', 'HEAD', 'OPTIONS']).map((item) => String(item).toUpperCase()));
+  const methodCanRetry = configuredMethods.has(method) || hasIdempotencyKey;
+  const requestedAttempts = value === false || !methodCanRetry ? 1 : Number(value?.maxAttempts ?? 3);
+  return {
+    maxAttempts: Math.max(1, Math.min(5, Math.trunc(requestedAttempts) || 1)),
+    baseDelayMs: Math.max(10, Number(value && value.baseDelayMs || 250)),
+    maxDelayMs: Math.max(100, Number(value && value.maxDelayMs || 4_000)),
+    statuses: new Set(value && value.statuses || [408, 425, 429, 500, 502, 503, 504]),
+  };
+}
+
+function normalizeTimeoutMs(value: number | undefined, fallback: number) {
+  if (value === 0) return 0;
+  const normalized = Number(value ?? fallback);
+  return Number.isFinite(normalized) && normalized > 0 ? Math.max(100, normalized) : fallback;
+}
+
+function createAttemptSignal(external: AbortSignal | undefined, timeoutMs: number) {
+  if (timeoutMs <= 0) {
+    return { signal: external, timedOut: () => false };
+  }
+  const timeoutFactory = (AbortSignal as unknown as { timeout?: (milliseconds: number) => AbortSignal }).timeout;
+  const timeoutSignal = timeoutFactory
+    ? timeoutFactory(timeoutMs)
+    : createFallbackTimeoutSignal(timeoutMs);
+  if (!external) {
+    return { signal: timeoutSignal, timedOut: () => timeoutSignal.aborted };
+  }
+  const anyFactory = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (anyFactory) {
+    return {
+      signal: anyFactory([external, timeoutSignal]),
+      timedOut: () => timeoutSignal.aborted && !external.aborted,
+    };
+  }
+  const controller = new AbortController();
+  const forward = (source: AbortSignal) => controller.abort(source.reason);
+  if (external.aborted) forward(external);
+  else external.addEventListener('abort', () => forward(external), { once: true });
+  if (timeoutSignal.aborted) forward(timeoutSignal);
+  else timeoutSignal.addEventListener('abort', () => forward(timeoutSignal), { once: true });
+  return {
+    signal: controller.signal,
+    timedOut: () => timeoutSignal.aborted && !external.aborted,
+  };
+}
+
+function createFallbackTimeoutSignal(timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`OPG request timed out after ${timeoutMs}ms`)), timeoutMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  return controller.signal;
+}
+
+function resolveRetryDelayMs(response: Response | undefined, retry: ResolvedRetryOptions, attempt: number) {
+  const retryAfter = response?.headers.get('retry-after');
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds)) return Math.min(retry.maxDelayMs, Math.max(0, seconds * 1000));
+    const dateMs = Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(dateMs) && dateMs > 0) return Math.min(retry.maxDelayMs, dateMs);
+  }
+  const exponential = Math.min(retry.maxDelayMs, retry.baseDelayMs * 2 ** Math.max(0, attempt - 1));
+  return Math.round(exponential * (0.8 + Math.random() * 0.4));
+}
+
+async function abortableDelay(milliseconds: number, signal?: AbortSignal) {
+  if (signal?.aborted) throw signal.reason || new Error('OPG request aborted');
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(signal?.reason || new Error('OPG request aborted'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -1245,22 +1626,24 @@ async function uploadBlob(
 async function waitForVideoTask(
   request: OpgClientInternals['request'],
   taskId: string,
-  options: { intervalMs?: number; timeoutMs?: number } = {},
+  options: OpgWaitOptions = {},
 ) {
-  const intervalMs = options.intervalMs || 3000;
-  const timeoutMs = options.timeoutMs || 10 * 60 * 1000;
+  const intervalMs = Math.max(100, options.intervalMs ?? 3000);
+  const timeoutMs = Math.max(100, options.timeoutMs ?? 10 * 60 * 1000);
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
+    if (options.signal?.aborted) throw options.signal.reason || new Error('OPG video wait aborted');
     const result = await request<Record<string, unknown>>('/videos/generations/tasks/query', {
       method: 'POST',
       body: { task_id: taskId, taskId },
+      signal: options.signal,
     });
     const status = String(result.status || result.task_status || result.output_status || '').toLowerCase();
     if (['succeeded', 'success', 'completed', 'finished', 'failed', 'error', 'canceled', 'cancelled'].includes(status)) {
       return result;
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await abortableDelay(intervalMs, options.signal);
   }
 
   throw new Error(`Timed out waiting for OPG video task ${taskId}`);
@@ -1317,6 +1700,41 @@ function normalizePathSegment(value: string, label: string) {
     throw new Error(`OPG ${label} is required`);
   }
   return encodeURIComponent(normalized);
+}
+
+async function createOpgApiError(response: Response) {
+  const text = await response.text().catch(() => '');
+  let responseBody: unknown;
+  try {
+    responseBody = text ? JSON.parse(text) : undefined;
+  } catch {
+    responseBody = undefined;
+  }
+  const payload = responseBody && typeof responseBody === 'object' ? responseBody as Record<string, any> : {};
+  const requestId = String(
+    response.headers.get('x-request-id') || payload.request_id || payload.requestId || '',
+  ).trim() || undefined;
+  const rawCode = payload.error?.code ?? payload.code;
+  return new OpgApiError(
+    response.status,
+    resolveErrorMessage(text, response.statusText),
+    text,
+    {
+      code: rawCode === undefined || rawCode === null ? undefined : String(rawCode),
+      requestId,
+      headers: Object.fromEntries(response.headers.entries()),
+      retryAfterMs: resolveRetryAfterMs(response.headers.get('retry-after')),
+      responseBody,
+    },
+  );
+}
+
+function resolveRetryAfterMs(value: string | null) {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const dateMs = Date.parse(value) - Date.now();
+  return Number.isFinite(dateMs) && dateMs > 0 ? dateMs : undefined;
 }
 
 function resolveErrorMessage(text: string, fallback: string) {
