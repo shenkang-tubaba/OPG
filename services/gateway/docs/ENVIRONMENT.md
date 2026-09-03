@@ -280,6 +280,7 @@ AppID/Secret 在 DB 按租户配置。
 | `AI_GATEWAY_USAGE_QUEUE_SIZE` | `1000` | 用量队列容量 |
 | `AI_GATEWAY_USAGE_QUEUE_OVERFLOW` | `sync` | 队列满时：`sync` 或 `drop` |
 | `AI_GATEWAY_TRACE_LOG` | — | `1` 输出逐请求 AI trace |
+| `AI_PRODUCT_UPSTREAM_DECOUPLING_MODE` | `legacy` | 产品/上游解耦模式：`legacy` / `shadow` / `enforced`；可被 `app_settings.extra_json.ai_product_upstream_decoupling.mode` 覆盖 |
 | `AI_DISABLE_VERCEL_SDK_FORWARD` | — | `1` 禁用 Vercel AI SDK 转发路径 |
 | `AI_VOICE_CLONE_MODEL_KEY` | — | 默认语音克隆模型 key |
 | `MINIMAX_VOICE_CATALOG_PATH` | — | MiniMax 音色表 JSON 路径 |
@@ -387,6 +388,7 @@ AppID/Secret 在 DB 按租户配置。
 | `AI_GATEWAY_USAGE_WORKERS` | | `4` | AI 用量 | |
 | `AI_GATEWAY_USER_RPM` | | `0` | AI 限流 | |
 | `AI_GATEWAY_VIDEO_UPSTREAM_TIMEOUT_MS` | | `3600000` | AI 超时 | |
+| `AI_PRODUCT_UPSTREAM_DECOUPLING_MODE` | | `legacy` | AI 解耦 | |
 | `AI_VOICE_CLONE_MODEL_KEY` | | — | AI 语音 | 可 |
 | `ALIPAY_AGREEMENT_NOTIFY_URL` | | — | 支付 | ✅ |
 | `ALIPAY_AGREEMENT_RETURN_URL` | | — | 支付 | ✅ |

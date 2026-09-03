@@ -98,6 +98,8 @@ PostgreSQL
 - 字符：TTS 使用 `per_mchar` 模式和每 100 字积分换算。
 - 图片/视频：从 `request_overrides.pricing` 按 quality、resolution 和 provider 参数解析。
 
+产品/上游解耦（P0）已落地 additive schema 与 shadow 接入，默认仍走上述 legacy 字段扣费。详见 [AI_PRODUCT_UPSTREAM_DECOUPLING.md](./AI_PRODUCT_UPSTREAM_DECOUPLING.md)。
+
 必须用现成库：
 
 - Provider SDK：`ai`、`@ai-sdk/openai`、`@anthropic-ai/sdk`、`@google/genai`、`openai`。
