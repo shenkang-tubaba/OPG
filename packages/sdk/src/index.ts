@@ -474,6 +474,23 @@ export type OpgPlatformClient = {
       retryClone(voiceId: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
       activateMapping(voiceId: string, mappingId: string): Promise<Record<string, unknown>>;
     };
+    decoupling: {
+      mode(query?: { app_id?: string }): Promise<Record<string, unknown>>;
+      listUpstreams(query?: OpgQuery): Promise<Record<string, unknown>>;
+      upsertUpstream(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      updateUpstream(upstreamModelId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      getSellPrice(modelId: string): Promise<Record<string, unknown>>;
+      createSellPrice(modelId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      getCostPrice(upstreamModelId: string): Promise<Record<string, unknown>>;
+      createCostPrice(upstreamModelId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      listRoutes(modelId: string): Promise<Record<string, unknown>>;
+      replaceRoutes(modelId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      previewExecutionPlan(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      activeRevision(): Promise<Record<string, unknown>>;
+      createRevision(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      validateRevision(revision: number | string): Promise<Record<string, unknown>>;
+      activateRevision(revision: number | string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    };
   };
   agents: {
     list(): Promise<Record<string, unknown>>;
@@ -1307,6 +1324,23 @@ export function createOpgPlatformClient(options: OpgClientOptions): OpgPlatformC
         migrate: (voiceId, input = {}) => request(`/ai/voices/${encodeURIComponent(voiceId)}/migrate`, { method: 'POST', body: input }),
         retryClone: (voiceId, input = {}) => request(`/ai/voices/${encodeURIComponent(voiceId)}/retry-clone`, { method: 'POST', body: input }),
         activateMapping: (voiceId, mappingId) => request(`/ai/voices/${encodeURIComponent(voiceId)}/activate-mapping`, { method: 'POST', body: { mapping_id: mappingId } }),
+      },
+      decoupling: {
+        mode: (query) => request('/ai/decoupling/mode', { query }),
+        listUpstreams: (query) => request('/ai/upstreams', { query }),
+        upsertUpstream: (input) => request('/ai/upstreams', { method: 'POST', body: input }),
+        updateUpstream: (upstreamModelId, input) => request(`/ai/upstreams/${encodeURIComponent(upstreamModelId)}`, { method: 'PUT', body: input }),
+        getSellPrice: (modelId) => request(`/ai/products/${encodeURIComponent(modelId)}/sell-price`),
+        createSellPrice: (modelId, input) => request(`/ai/products/${encodeURIComponent(modelId)}/sell-price`, { method: 'POST', body: input }),
+        getCostPrice: (upstreamModelId) => request(`/ai/upstreams/${encodeURIComponent(upstreamModelId)}/cost-price`),
+        createCostPrice: (upstreamModelId, input) => request(`/ai/upstreams/${encodeURIComponent(upstreamModelId)}/cost-price`, { method: 'POST', body: input }),
+        listRoutes: (modelId) => request(`/ai/products/${encodeURIComponent(modelId)}/routes`),
+        replaceRoutes: (modelId, input) => request(`/ai/products/${encodeURIComponent(modelId)}/routes`, { method: 'PUT', body: input }),
+        previewExecutionPlan: (input) => request('/ai/execution-plan/preview', { method: 'POST', body: input }),
+        activeRevision: () => request('/ai/revisions/active'),
+        createRevision: (input) => request('/ai/revisions', { method: 'POST', body: input }),
+        validateRevision: (revision) => request(`/ai/revisions/${encodeURIComponent(String(revision))}/validate`, { method: 'POST', body: {} }),
+        activateRevision: (revision, input = {}) => request(`/ai/revisions/${encodeURIComponent(String(revision))}/activate`, { method: 'POST', body: input }),
       },
     },
     agents: {
