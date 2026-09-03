@@ -16,6 +16,10 @@ import { AiGatewayErrorClassifierService } from './ai-gateway-error-classifier.s
 import { AiGatewaySchedulerService } from './ai-gateway-scheduler.service';
 import { AiVideoResultProxyService } from './ai-video-result-proxy.service';
 import { AiGatewayObservabilityService } from './ai-gateway-observability.service';
+import { AiUpstreamCatalogService } from './ai-upstream-catalog.service';
+import { AiPriceBookService } from './ai-price-book.service';
+import { AiConfigurationRevisionService } from './ai-configuration-revision.service';
+import { AiExecutionPlanResolverService } from './ai-execution-plan-resolver.service';
 import { AuthModule } from '../auth/auth.module';
 import { AiDebugAuthService } from './guards/ai-debug-auth.service';
 import { AiDebugJwtAuthGuard } from './guards/ai-debug-jwt-auth.guard';
@@ -44,11 +48,27 @@ import { AdminNotificationsModule } from '../admin-notifications/admin-notificat
     AiGatewaySchedulerService,
     AiVideoResultProxyService,
     AiGatewayObservabilityService,
+    AiUpstreamCatalogService,
+    AiPriceBookService,
+    AiConfigurationRevisionService,
+    AiExecutionPlanResolverService,
     AiDebugAuthService,
     AiDebugJwtAuthGuard,
     OpenAiCompatAuthGuard,
     PlatformAdminAccessGuard,
   ],
-  exports: [AiChatService, AiRoutingService, AiVoicesService, AiPointsService, AiGatewayObservabilityService, AiDebugAuthService, AiDebugJwtAuthGuard],
+  exports: [
+    AiChatService,
+    AiRoutingService,
+    AiVoicesService,
+    AiPointsService,
+    AiGatewayObservabilityService,
+    AiDebugAuthService,
+    AiDebugJwtAuthGuard,
+    AiUpstreamCatalogService,
+    AiPriceBookService,
+    AiConfigurationRevisionService,
+    AiExecutionPlanResolverService,
+  ],
 })
 export class AiChatModule {}

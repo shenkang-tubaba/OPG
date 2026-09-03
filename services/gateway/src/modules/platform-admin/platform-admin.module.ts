@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PlatformAdminController } from './platform-admin.controller';
 import { FeedbackAdminApiController } from './feedback-admin-api.controller';
+import { PlatformAiProductDecouplingController } from './platform-ai-product-decoupling.controller';
 import { PlatformAdminService } from './platform-admin.service';
 import { AiChatModule } from '../ai-chat/ai-chat.module';
 import { BehaviorAnalyticsModule } from '../behavior-analytics/behavior-analytics.module';
@@ -29,7 +30,7 @@ import { AdminNotificationsModule } from '../admin-notifications/admin-notificat
 
 @Module({
   imports: [AiChatModule, RedeemModule, BehaviorAnalyticsModule, FeedbackModule, PaymentsModule, AuthModule, TenantSiteModule, EmailDeliveryModule, OutboundProxyModule, RuntimeSettingsModule, SmsModule, DeveloperAuthorizationModule, PlatformTasksModule, AdminNotificationsModule],
-  controllers: [PlatformAdminController, FeedbackAdminApiController],
+  controllers: [PlatformAdminController, FeedbackAdminApiController, PlatformAiProductDecouplingController],
   providers: [
     PlatformAdminService,
     PlatformAppAnalyticsService,

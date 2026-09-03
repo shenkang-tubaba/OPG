@@ -182,6 +182,13 @@ type AiModelSourceRouteJoinedRow = {
   sort_order: number;
   is_active: boolean;
   upstream_model: string | null;
+  upstream_model_id?: string | null;
+  variant_key?: string | null;
+  match_priority?: number | null;
+  contract_version?: string | null;
+  adapter_config_json?: unknown;
+  execution_mode?: string | null;
+  request_match?: unknown;
   endpoint_path: string | null;
   api_type: string | null;
   request_overrides: unknown;
@@ -360,6 +367,13 @@ export interface AiModelSourceRouteInput {
   sort_order?: number | string;
   is_active?: boolean;
   upstream_model?: string | null;
+  upstream_model_id?: string | null;
+  variant_key?: string | null;
+  match_priority?: number | string | null;
+  contract_version?: string | null;
+  adapter_config_json?: Record<string, unknown> | null;
+  execution_mode?: string | null;
+  request_match?: Record<string, unknown> | null;
   endpoint_path?: string | null;
   api_type?: string | null;
   request_overrides?: Record<string, unknown> | null;
@@ -440,6 +454,18 @@ export interface ResolvedAiRoute {
     outbound_proxy_id: string | null;
     is_active: boolean;
   };
+  upstream_model_id?: string | null;
+  variant_key?: string | null;
+  match_priority?: number | null;
+  contract_version?: string | null;
+  adapter_config_json?: Record<string, unknown>;
+  request_match?: Record<string, unknown>;
+  configuration_revision?: number | null;
+  execution_plan_hash?: string | null;
+  decoupling_mode?: 'legacy' | 'shadow' | 'enforced' | null;
+  sell_price_version_id?: string | null;
+  upstream_cost_version_id?: string | null;
+  request_variant?: Record<string, unknown> | null;
 }
 
 type ResolvedRouteCacheEntry = {
@@ -496,6 +522,13 @@ export interface AiUsageLogInput {
   pricing_snapshot_json?: Record<string, unknown> | null;
   pricing_snapshot_hash?: string | null;
   latency_ms?: number | null;
+  sell_price_version_id?: string | null;
+  upstream_model_id?: string | null;
+  upstream_cost_version_id?: string | null;
+  configuration_revision?: number | null;
+  execution_plan_hash?: string | null;
+  customer_charge_rmb?: number | null;
+  snapshot_schema_version?: string | null;
 }
 
 export interface AiUsageSummaryQueryInput {
@@ -579,6 +612,7 @@ export class AiRoutingService implements OnModuleInit {
   private readonly sourceApiKeyCache = new Map<string, { value: AiGlobalSourceApiKeyRow[]; expiresAt: number }>();
   private readonly sourceApiKeyLastUsedWriteAt = new Map<string, number>();
   private modelSourceRoutesTableAvailable: boolean | null = null;
+  private modelSourceRouteDecouplingColumnsAvailable: boolean | null = null;
   private usageFactsRefreshRunning = false;
 
   constructor(
@@ -2074,14 +2108,18 @@ export class AiRoutingService implements OnModuleInit {
     };
   }
 
-  async replaceGlobalModelSourceRoutes(modelId: string, actorUserId: string, payload: { items?: AiModelSourceRouteInput[] }) {
+  async replaceGlobalModelSourceRoutes(
+    modelId: string,
+    actorUserId: string | null,
+    payload: { items?: AiModelSourceRouteInput[] },
+  ) {
     await this.ensureSchema();
     await this.ensureModelSourceRoutesTableReady();
     const model = await this.getGlobalModelRowById(modelId);
     if (!model) {
       throw new NotFoundException('AI model not found');
     }
-    const routes = await this.replaceModelSourceRoutes(modelId, null, actorUserId, payload?.items || [], {
+    const routes = await this.replaceModelSourceRoutes(modelId, null, actorUserId || '', payload?.items || [], {
       default_source_id: model.default_source_id,
       upstream_model: model.upstream_model,
       endpoint_path: model.endpoint_path,
@@ -2096,7 +2134,7 @@ export class AiRoutingService implements OnModuleInit {
              updated_at = now()
          WHERE id = $3::uuid`,
         primarySourceId,
-        actorUserId,
+        actorUserId || null,
         modelId,
       );
     }
@@ -2647,33 +2685,24 @@ export class AiRoutingService implements OnModuleInit {
   async recordUsage(input: AiUsageLogInput) {
     await this.ensureSchema();
 
-    await this.prisma.$executeRawUnsafe(
-      `INSERT INTO ai_usage_logs (
-         id, app_id, app_slug, user_id, global_model_id, model_key, upstream_model, capability,
-         source_id, source_name, provider_type, endpoint_path, request_path, request_id, is_stream,
-         success, error_message, prompt_tokens, completion_tokens, total_tokens,
-         uncached_input_tokens, cached_input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
-         cache_creation_5m_input_tokens, cache_creation_1h_input_tokens,
-         unit_price_rmb_per_mtoken, unit_price_rmb_per_call, unit_price_rmb_per_minute, unit_price_mode,
-         unit_price_rmb_input_per_mtoken, unit_price_rmb_cached_input_per_mtoken,
-         unit_price_rmb_cache_write_5m_per_mtoken, unit_price_rmb_cache_write_1h_per_mtoken,
-         unit_price_rmb_output_per_mtoken,
-         billed_input_tokens, billed_cached_input_tokens, billed_cache_write_tokens, billed_output_tokens,
-         billed_units, billed_unit_label, billed_duration_seconds, estimated_cost_rmb, points_cost, points_pricing_source,
-         pricing_snapshot_json, pricing_snapshot_hash, usage_reference_id, latency_ms, created_at
-       )
-       VALUES (
-         gen_random_uuid(), $1::uuid, $2, $3::uuid, $4::uuid, $5, $6, $7,
-         $8::uuid, $9, $10, $11, $12, $13, $14,
-         $15, $16, $17::bigint, $18::bigint, $19::bigint,
-         $20::bigint, $21::bigint, $22::bigint, $23::bigint,
-         $24::bigint, $25::bigint,
-         $26::numeric, $27::numeric, $28::numeric, $29,
-         $30::numeric, $31::numeric, $32::numeric, $33::numeric, $34::numeric,
-         $35::bigint, $36::bigint, $37::bigint, $38::bigint,
-         $39::numeric, $40, $41::bigint, $42::numeric, $43::numeric,
-         $44, $45::jsonb, $46, $47, $48::int, now()
-       )`,
+    const sellPriceVersionId = this.normalizeNullableUuid(input.sell_price_version_id);
+    const upstreamModelId = this.normalizeNullableUuid(input.upstream_model_id);
+    const upstreamCostVersionId = this.normalizeNullableUuid(input.upstream_cost_version_id);
+    const configurationRevision = this.normalizeNullableBigInt(input.configuration_revision);
+    const executionPlanHash = this.normalizeNullableString(input.execution_plan_hash, 64);
+    const customerChargeRmb = this.normalizeNullableDecimal(input.customer_charge_rmb);
+    const snapshotSchemaVersion = this.normalizeNullableString(input.snapshot_schema_version, 32);
+    const writeDecouplingColumns = Boolean(
+      sellPriceVersionId
+      || upstreamModelId
+      || upstreamCostVersionId
+      || configurationRevision
+      || executionPlanHash
+      || customerChargeRmb
+      || snapshotSchemaVersion,
+    );
+
+    const baseValues = [
       input.app_id,
       String(input.app_slug || '').trim().toLowerCase(),
       this.normalizeNullableUuid(input.user_id),
@@ -2722,6 +2751,80 @@ export class AiRoutingService implements OnModuleInit {
       this.normalizeNullableString(input.pricing_snapshot_hash, 64),
       this.normalizeNullableString(input.usage_reference_id, 128),
       this.normalizeNullableInt(input.latency_ms),
+    ];
+
+    if (!writeDecouplingColumns) {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO ai_usage_logs (
+           id, app_id, app_slug, user_id, global_model_id, model_key, upstream_model, capability,
+           source_id, source_name, provider_type, endpoint_path, request_path, request_id, is_stream,
+           success, error_message, prompt_tokens, completion_tokens, total_tokens,
+           uncached_input_tokens, cached_input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
+           cache_creation_5m_input_tokens, cache_creation_1h_input_tokens,
+           unit_price_rmb_per_mtoken, unit_price_rmb_per_call, unit_price_rmb_per_minute, unit_price_mode,
+           unit_price_rmb_input_per_mtoken, unit_price_rmb_cached_input_per_mtoken,
+           unit_price_rmb_cache_write_5m_per_mtoken, unit_price_rmb_cache_write_1h_per_mtoken,
+           unit_price_rmb_output_per_mtoken,
+           billed_input_tokens, billed_cached_input_tokens, billed_cache_write_tokens, billed_output_tokens,
+           billed_units, billed_unit_label, billed_duration_seconds, estimated_cost_rmb, points_cost, points_pricing_source,
+           pricing_snapshot_json, pricing_snapshot_hash, usage_reference_id, latency_ms, created_at
+         )
+         VALUES (
+           gen_random_uuid(), $1::uuid, $2, $3::uuid, $4::uuid, $5, $6, $7,
+           $8::uuid, $9, $10, $11, $12, $13, $14,
+           $15, $16, $17::bigint, $18::bigint, $19::bigint,
+           $20::bigint, $21::bigint, $22::bigint, $23::bigint,
+           $24::bigint, $25::bigint,
+           $26::numeric, $27::numeric, $28::numeric, $29,
+           $30::numeric, $31::numeric, $32::numeric, $33::numeric, $34::numeric,
+           $35::bigint, $36::bigint, $37::bigint, $38::bigint,
+           $39::numeric, $40, $41::bigint, $42::numeric, $43::numeric,
+           $44, $45::jsonb, $46, $47, $48::int, now()
+         )`,
+        ...baseValues,
+      );
+      return;
+    }
+
+    await this.prisma.$executeRawUnsafe(
+      `INSERT INTO ai_usage_logs (
+         id, app_id, app_slug, user_id, global_model_id, model_key, upstream_model, capability,
+         source_id, source_name, provider_type, endpoint_path, request_path, request_id, is_stream,
+         success, error_message, prompt_tokens, completion_tokens, total_tokens,
+         uncached_input_tokens, cached_input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
+         cache_creation_5m_input_tokens, cache_creation_1h_input_tokens,
+         unit_price_rmb_per_mtoken, unit_price_rmb_per_call, unit_price_rmb_per_minute, unit_price_mode,
+         unit_price_rmb_input_per_mtoken, unit_price_rmb_cached_input_per_mtoken,
+         unit_price_rmb_cache_write_5m_per_mtoken, unit_price_rmb_cache_write_1h_per_mtoken,
+         unit_price_rmb_output_per_mtoken,
+         billed_input_tokens, billed_cached_input_tokens, billed_cache_write_tokens, billed_output_tokens,
+         billed_units, billed_unit_label, billed_duration_seconds, estimated_cost_rmb, points_cost, points_pricing_source,
+         pricing_snapshot_json, pricing_snapshot_hash, usage_reference_id, latency_ms,
+         sell_price_version_id, upstream_model_id, upstream_cost_version_id, configuration_revision,
+         execution_plan_hash, customer_charge_rmb, snapshot_schema_version, created_at
+       )
+       VALUES (
+         gen_random_uuid(), $1::uuid, $2, $3::uuid, $4::uuid, $5, $6, $7,
+         $8::uuid, $9, $10, $11, $12, $13, $14,
+         $15, $16, $17::bigint, $18::bigint, $19::bigint,
+         $20::bigint, $21::bigint, $22::bigint, $23::bigint,
+         $24::bigint, $25::bigint,
+         $26::numeric, $27::numeric, $28::numeric, $29,
+         $30::numeric, $31::numeric, $32::numeric, $33::numeric, $34::numeric,
+         $35::bigint, $36::bigint, $37::bigint, $38::bigint,
+         $39::numeric, $40, $41::bigint, $42::numeric, $43::numeric,
+         $44, $45::jsonb, $46, $47, $48::int,
+         $49::uuid, $50::uuid, $51::uuid, $52::bigint,
+         $53, $54::numeric, $55, now()
+       )`,
+      ...baseValues,
+      sellPriceVersionId,
+      upstreamModelId,
+      upstreamCostVersionId,
+      configurationRevision,
+      executionPlanHash,
+      customerChargeRmb,
+      snapshotSchemaVersion,
     );
   }
 
@@ -3719,7 +3822,15 @@ export class AiRoutingService implements OnModuleInit {
       upstream_model: sourceRoute.upstream_model || model.upstream_model,
       endpoint_path: sourceRoute.endpoint_path || model.endpoint_path,
       api_type: sourceRoute.api_type || model.api_type,
-    }, source, this.normalizeObject(sourceRoute.request_overrides), sourceRoute.route_key || sourceRoute.id);
+      execution_mode: sourceRoute.execution_mode || model.execution_mode,
+    }, source, this.normalizeObject(sourceRoute.request_overrides), sourceRoute.route_key || sourceRoute.id, {
+      upstream_model_id: this.normalizeNullableUuid(sourceRoute.upstream_model_id),
+      variant_key: this.normalizeNullableString(sourceRoute.variant_key, 160) || 'default',
+      match_priority: this.normalizeNullableInt(sourceRoute.match_priority) ?? 0,
+      contract_version: this.normalizeNullableString(sourceRoute.contract_version, 64) || 'legacy-v1',
+      adapter_config_json: this.normalizeObject(sourceRoute.adapter_config_json),
+      request_match: this.normalizeObject(sourceRoute.request_match),
+    });
   }
 
   private buildResolvedRouteFromSource(
@@ -3728,6 +3839,14 @@ export class AiRoutingService implements OnModuleInit {
     source: AiGlobalSourceRow,
     routeOverrides: Record<string, unknown> = {},
     routeKey?: string | null,
+    routeMetadata: {
+      upstream_model_id?: string | null;
+      variant_key?: string | null;
+      match_priority?: number | null;
+      contract_version?: string | null;
+      adapter_config_json?: Record<string, unknown>;
+      request_match?: Record<string, unknown>;
+    } = {},
   ): ResolvedAiRoute {
     const mergedOverrides = {
       ...this.normalizeObject(model.request_overrides),
@@ -3796,6 +3915,18 @@ export class AiRoutingService implements OnModuleInit {
         outbound_proxy_id: source.outbound_proxy_id || null,
         is_active: source.is_active,
       },
+      upstream_model_id: routeMetadata.upstream_model_id || null,
+      variant_key: routeMetadata.variant_key || 'default',
+      match_priority: routeMetadata.match_priority ?? 0,
+      contract_version: routeMetadata.contract_version || 'legacy-v1',
+      adapter_config_json: routeMetadata.adapter_config_json || {},
+      request_match: routeMetadata.request_match || {},
+      sell_price_version_id: null,
+      upstream_cost_version_id: null,
+      configuration_revision: null,
+      execution_plan_hash: null,
+      decoupling_mode: null,
+      request_variant: null,
     };
   }
 
@@ -4424,12 +4555,40 @@ export class AiRoutingService implements OnModuleInit {
       sort_order: Number(row.sort_order || 0),
       is_active: row.is_active,
       upstream_model: row.upstream_model || '',
+      upstream_model_id: row.upstream_model_id || null,
+      variant_key: row.variant_key || 'default',
+      match_priority: Number(row.match_priority || 0),
+      contract_version: row.contract_version || 'legacy-v1',
+      adapter_config_json: this.normalizeObject(row.adapter_config_json),
+      execution_mode: row.execution_mode || null,
+      request_match: this.normalizeObject(row.request_match),
       endpoint_path: row.endpoint_path || '',
       api_type: row.api_type || '',
       request_overrides: this.normalizeObject(row.request_overrides),
       created_at: row.created_at,
       updated_at: row.updated_at,
     }));
+  }
+
+  private async isModelSourceRouteDecouplingColumnsAvailable(): Promise<boolean> {
+    if (this.modelSourceRouteDecouplingColumnsAvailable !== null) {
+      return this.modelSourceRouteDecouplingColumnsAvailable;
+    }
+    try {
+      const rows = await (this.prisma.$queryRawUnsafe(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'ai_model_source_routes'
+              AND column_name = 'upstream_model_id'
+         ) AS exists`,
+      ) as Promise<Array<{ exists: boolean }>>);
+      this.modelSourceRouteDecouplingColumnsAvailable = rows[0]?.exists === true;
+    } catch {
+      this.modelSourceRouteDecouplingColumnsAvailable = false;
+    }
+    return this.modelSourceRouteDecouplingColumnsAvailable;
   }
 
   private async isModelSourceRoutesTableAvailable(): Promise<boolean> {
@@ -4570,6 +4729,13 @@ export class AiRoutingService implements OnModuleInit {
         sort_order: this.normalizeNullableInt(row.sort_order) ?? index,
         is_active: row.is_active !== false,
         upstream_model: this.normalizeNullableString(row.upstream_model, 256),
+        upstream_model_id: this.normalizeNullableUuid(row.upstream_model_id),
+        variant_key: this.normalizeNullableString(row.variant_key, 160) || 'default',
+        match_priority: this.normalizeNullableInt(row.match_priority) ?? 0,
+        contract_version: this.normalizeNullableString(row.contract_version, 64) || 'legacy-v1',
+        adapter_config_json: this.normalizeObject(row.adapter_config_json),
+        execution_mode: this.normalizeNullableString(row.execution_mode, 16),
+        request_match: this.normalizeObject(row.request_match),
         endpoint_path: this.normalizeNullableString(row.endpoint_path, 255),
         api_type: this.normalizeNullableString(row.api_type, 64),
         request_overrides: this.normalizeObject(row.request_overrides),
@@ -4632,6 +4798,7 @@ export class AiRoutingService implements OnModuleInit {
       await this.ensureGlobalSourceExists(String(route.source_id));
     }
     const appIdValue = appId ? this.normalizeNullableUuid(appId) : null;
+    const decouplingColumnsReady = await this.isModelSourceRouteDecouplingColumnsAvailable();
     await this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(
         `DELETE FROM ai_model_source_routes
@@ -4645,29 +4812,66 @@ export class AiRoutingService implements OnModuleInit {
       );
       for (let index = 0; index < normalized.length; index += 1) {
         const route = normalized[index];
-        await tx.$executeRawUnsafe(
-          `INSERT INTO ai_model_source_routes (
-             id, route_key, app_id, global_model_id, source_id, sort_order, is_active,
-             upstream_model, endpoint_path, api_type, request_overrides,
-             created_by_user_id, updated_by_user_id
-           )
-           VALUES (
-             gen_random_uuid(), $1, $2::uuid, $3::uuid, $4::uuid, $5, $6,
-             $7, $8, $9, $10::jsonb,
-             $11::uuid, $11::uuid
-           )`,
-          route.route_key,
-          appIdValue,
-          modelId,
-          String(route.source_id),
-          this.normalizeNullableInt(route.sort_order) ?? index,
-          route.is_active !== false,
-          this.normalizeNullableString(route.upstream_model, 256),
-          this.normalizeNullableString(route.endpoint_path, 255),
-          this.normalizeNullableString(route.api_type, 64),
-          JSON.stringify(this.normalizeObject(route.request_overrides)),
-          actorUserId,
-        );
+        if (decouplingColumnsReady) {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO ai_model_source_routes (
+               id, route_key, app_id, global_model_id, source_id, sort_order, is_active,
+               upstream_model, upstream_model_id, variant_key, match_priority, contract_version,
+               adapter_config_json, execution_mode, request_match,
+               endpoint_path, api_type, request_overrides,
+               created_by_user_id, updated_by_user_id
+             )
+             VALUES (
+               gen_random_uuid(), $1, $2::uuid, $3::uuid, $4::uuid, $5, $6,
+               $7, $8::uuid, $9, $10, $11,
+               $12::jsonb, $13, $14::jsonb,
+               $15, $16, $17::jsonb,
+               $18::uuid, $18::uuid
+             )`,
+            route.route_key,
+            appIdValue,
+            modelId,
+            String(route.source_id),
+            this.normalizeNullableInt(route.sort_order) ?? index,
+            route.is_active !== false,
+            this.normalizeNullableString(route.upstream_model, 256),
+            this.normalizeNullableUuid(route.upstream_model_id),
+            this.normalizeNullableString(route.variant_key, 160) || 'default',
+            this.normalizeNullableInt(route.match_priority) ?? 0,
+            this.normalizeNullableString(route.contract_version, 64) || 'legacy-v1',
+            JSON.stringify(this.normalizeObject(route.adapter_config_json)),
+            this.normalizeNullableString(route.execution_mode, 16),
+            JSON.stringify(this.normalizeObject(route.request_match)),
+            this.normalizeNullableString(route.endpoint_path, 255),
+            this.normalizeNullableString(route.api_type, 64),
+            JSON.stringify(this.normalizeObject(route.request_overrides)),
+            actorUserId || null,
+          );
+        } else {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO ai_model_source_routes (
+               id, route_key, app_id, global_model_id, source_id, sort_order, is_active,
+               upstream_model, endpoint_path, api_type, request_overrides,
+               created_by_user_id, updated_by_user_id
+             )
+             VALUES (
+               gen_random_uuid(), $1, $2::uuid, $3::uuid, $4::uuid, $5, $6,
+               $7, $8, $9, $10::jsonb,
+               $11::uuid, $11::uuid
+             )`,
+            route.route_key,
+            appIdValue,
+            modelId,
+            String(route.source_id),
+            this.normalizeNullableInt(route.sort_order) ?? index,
+            route.is_active !== false,
+            this.normalizeNullableString(route.upstream_model, 256),
+            this.normalizeNullableString(route.endpoint_path, 255),
+            this.normalizeNullableString(route.api_type, 64),
+            JSON.stringify(this.normalizeObject(route.request_overrides)),
+            actorUserId || null,
+          );
+        }
       }
     });
     this.observability.recordAuditEventSafe({

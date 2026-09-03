@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { createHash, randomUUID } from 'crypto';
-import { BadGatewayException, BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import {
   embed,
@@ -30,6 +30,8 @@ import { AiGatewaySchedulerService } from './ai-gateway-scheduler.service';
 import { AiVoicesService } from './ai-voices.service';
 import { AiVideoResultProxyService } from './ai-video-result-proxy.service';
 import { AiGatewayObservabilityService } from './ai-gateway-observability.service';
+import { AiExecutionPlanResolverService } from './ai-execution-plan-resolver.service';
+import { AiConfigurationRevisionService } from './ai-configuration-revision.service';
 import { OutboundHttpClientService } from '../outbound-proxy/outbound-http-client.service';
 import { RuntimeSettingsService } from '../runtime-settings/runtime-settings.service';
 import { AdminNotificationsService } from '../admin-notifications/admin-notifications.service';
@@ -380,6 +382,8 @@ export class AiChatService implements OnModuleInit {
     private readonly outboundHttp: OutboundHttpClientService,
     private readonly runtimeSettingsService: RuntimeSettingsService,
     private readonly adminNotifications: AdminNotificationsService,
+    @Optional() private readonly aiExecutionPlanResolver?: AiExecutionPlanResolverService,
+    @Optional() private readonly aiConfigurationRevisionService?: AiConfigurationRevisionService,
   ) {}
 
   async onModuleInit() {
@@ -884,7 +888,128 @@ export class AiChatService implements OnModuleInit {
     }
     const preferredRouteKey = this.resolvePreferredMediaRouteKey(routes[0], effectivePayload);
     routes = this.orderRoutesByPreferredRouteKey(routes, preferredRouteKey);
+    routes = await this.applyDecoupledExecutionPlan(
+      routes,
+      appSlug,
+      capability,
+      requestedModel,
+      effectivePayload,
+      context,
+    );
     return this.invokeResolvedRouteCandidates(routes, effectivePayload, context, { fixedFirstRouteKey: preferredRouteKey });
+  }
+
+  private async applyDecoupledExecutionPlan(
+    routes: ResolvedAiRoute[],
+    appSlug: string,
+    capability: AiCapability,
+    requestedModel: string | undefined,
+    payload: Record<string, unknown>,
+    context: AiInvocationContext,
+  ): Promise<ResolvedAiRoute[]> {
+    const resolver = this.aiExecutionPlanResolver;
+    const revisions = this.aiConfigurationRevisionService;
+    const appId = routes[0]?.app_id;
+    if (!resolver || !revisions || !appId || !routes[0]?.model_key) {
+      return routes;
+    }
+    const mode = await revisions.resolveMode(appId);
+    if (mode === 'legacy') {
+      return routes;
+    }
+    try {
+      const plan = await resolver.resolve({
+        app_id: appId,
+        model_key: routes[0].model_key,
+        capability,
+        payload: { ...payload, ...(requestedModel ? { model: requestedModel } : {}) },
+        mode,
+        billing_intent: context.skip_points ? 'internal_non_billable' : 'customer_billed',
+        allowed_route_keys: routes.map((route) => route.route_key),
+      });
+      const selectedKeys = plan.candidates
+        .filter((candidate) => candidate.variant_key === plan.selected_variant_key)
+        .map((candidate) => candidate.route_key)
+        .filter(Boolean);
+      const selectedRouteMap = new Map(routes.map((route) => [route.route_key, route]));
+      const candidateByRouteKey = new Map(plan.candidates.map((candidate) => [candidate.route_key, candidate]));
+      const selectedRoutes = selectedKeys
+        .map((routeKey) => {
+          const route = selectedRouteMap.get(routeKey);
+          const candidate = candidateByRouteKey.get(routeKey);
+          return route && candidate
+            ? {
+              ...route,
+              upstream_model_id: candidate.upstream_model_id || route.upstream_model_id || null,
+              variant_key: candidate.variant_key,
+              match_priority: candidate.match_priority,
+              contract_version: candidate.contract_version,
+              adapter_config_json: candidate.adapter_config_json,
+              configuration_revision: plan.configuration_revision,
+              execution_plan_hash: plan.plan_hash,
+              decoupling_mode: mode,
+              sell_price_version_id: plan.sell_price?.id || route.sell_price_version_id || null,
+              upstream_cost_version_id: candidate.cost_version?.id || null,
+              request_variant: plan.variant as unknown as Record<string, unknown>,
+            }
+            : null;
+        })
+        .filter(Boolean) as ResolvedAiRoute[];
+      const mismatch = {
+        app_id: appId,
+        app_slug: appSlug,
+        capability,
+        model_key: routes[0].model_key,
+        legacy_route_key: routes[0].route_key,
+        decoupled_route_key: selectedRoutes[0]?.route_key || null,
+        variant_key: plan.selected_variant_key,
+        variant_hash: plan.variant.hash,
+        configuration_revision: plan.configuration_revision,
+        execution_plan_hash: plan.plan_hash,
+        warnings: plan.warnings,
+      };
+      if (mode === 'shadow') {
+        this.logger.log(`AI decoupling shadow ${JSON.stringify(mismatch)}`);
+        this.aiGatewayObservability.recordRequestEventSafe({
+          route: routes[0],
+          user_id: context.user_id || null,
+          request_id: this.stringOrUndefined(payload.request_id ?? payload.task_id ?? payload.taskId) || null,
+          request_path: context.request_path || '',
+          stage: 'decoupling_shadow_compare',
+          success: selectedRoutes[0]?.route_key === routes[0].route_key,
+          metadata: mismatch,
+        });
+        return routes.map((route) => {
+          const candidate = candidateByRouteKey.get(route.route_key);
+          return candidate
+            ? {
+              ...route,
+              upstream_model_id: candidate.upstream_model_id || route.upstream_model_id || null,
+              variant_key: candidate.variant_key,
+              match_priority: candidate.match_priority,
+              contract_version: candidate.contract_version,
+              adapter_config_json: candidate.adapter_config_json,
+              configuration_revision: plan.configuration_revision,
+              execution_plan_hash: plan.plan_hash,
+              decoupling_mode: mode,
+              sell_price_version_id: plan.sell_price?.id || route.sell_price_version_id || null,
+              upstream_cost_version_id: candidate.cost_version?.id || null,
+              request_variant: plan.variant as unknown as Record<string, unknown>,
+            }
+            : route;
+        });
+      }
+      if (!selectedRoutes.length) {
+        throw new BadGatewayException(`decoupled route unavailable for model ${routes[0].model_key}`);
+      }
+      return selectedRoutes;
+    } catch (error: any) {
+      if (mode === 'enforced') {
+        throw error;
+      }
+      this.logger.warn(`AI decoupling shadow resolver failed; keeping legacy route: ${error?.message || error}`);
+      return routes;
+    }
   }
 
   private orderRoutesByPreferredRouteKey(
@@ -13600,6 +13725,18 @@ export class AiChatService implements OnModuleInit {
           pricing_snapshot_json: pricingSnapshot.snapshot,
           pricing_snapshot_hash: pricingSnapshot.hash,
           latency_ms: input.latency_ms ?? null,
+          sell_price_version_id: route.sell_price_version_id || null,
+          upstream_model_id: route.upstream_model_id || null,
+          upstream_cost_version_id: route.upstream_cost_version_id || null,
+          configuration_revision: route.configuration_revision ?? null,
+          execution_plan_hash: route.execution_plan_hash || null,
+          snapshot_schema_version: (
+            route.sell_price_version_id
+            || route.upstream_model_id
+            || route.upstream_cost_version_id
+            || route.configuration_revision
+            || route.execution_plan_hash
+          ) ? 'ai-pricing-snapshot-v2' : null,
         });
         usageRecorded = true;
         this.aiGatewayObservability.recordRequestEventSafe({
