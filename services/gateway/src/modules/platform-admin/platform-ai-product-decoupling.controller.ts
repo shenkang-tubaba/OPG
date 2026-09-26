@@ -170,6 +170,16 @@ export class PlatformAiProductDecouplingController {
     if (!Array.isArray(body.items)) {
       throw new BadRequestException('items is required');
     }
+    if (body.membership_route_enabled !== undefined) {
+      if (typeof body.membership_route_enabled !== 'boolean') {
+        throw new BadRequestException('membership_route_enabled must be a boolean');
+      }
+      await this.routing.updateGlobalModel(modelId, String(req.user?.id || ''), {
+        membership_route_enabled: body.membership_route_enabled,
+        source_routes: body.items as any,
+      });
+      return this.routing.listGlobalModelSourceRoutes(modelId);
+    }
     return this.routing.replaceGlobalModelSourceRoutes(modelId, req.user?.id || null, {
       items: body.items as Array<Record<string, unknown>>,
     });

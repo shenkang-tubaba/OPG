@@ -32,6 +32,9 @@ import { AiVideoResultProxyService } from './ai-video-result-proxy.service';
 import { AiGatewayObservabilityService } from './ai-gateway-observability.service';
 import { AiExecutionPlanResolverService } from './ai-execution-plan-resolver.service';
 import { AiConfigurationRevisionService } from './ai-configuration-revision.service';
+import { AiRouteAudienceDecision, AiRouteAudiencePolicyService } from './ai-route-audience-policy.service';
+import { AiPriceBookService } from './ai-price-book.service';
+import { AiMeteredUsage } from './ai-product-decoupling.types';
 import { OutboundHttpClientService } from '../outbound-proxy/outbound-http-client.service';
 import { RuntimeSettingsService } from '../runtime-settings/runtime-settings.service';
 import { AdminNotificationsService } from '../admin-notifications/admin-notifications.service';
@@ -95,6 +98,8 @@ type AiInvocationContext = {
   request_path?: string;
   skip_usage_tracking?: boolean;
   skip_points?: boolean;
+  route_audience_decision?: AiRouteAudienceDecision | null;
+  audience_tier?: 'FREE' | 'PAID';
   points_reservation?: {
     app_id: string;
     user_id: string;
@@ -384,6 +389,8 @@ export class AiChatService implements OnModuleInit {
     private readonly adminNotifications: AdminNotificationsService,
     @Optional() private readonly aiExecutionPlanResolver?: AiExecutionPlanResolverService,
     @Optional() private readonly aiConfigurationRevisionService?: AiConfigurationRevisionService,
+    @Optional() private readonly aiRouteAudiencePolicy?: AiRouteAudiencePolicyService,
+    @Optional() private readonly aiPriceBookService?: AiPriceBookService,
   ) {}
 
   async onModuleInit() {
@@ -499,7 +506,7 @@ export class AiChatService implements OnModuleInit {
 
   async forwardResponses(appSlug: string, payload: Record<string, unknown>, context: AiInvocationContext = {}) {
     const requestedModel = this.stringOrUndefined(payload.model);
-    const route = await this.aiRoutingService.resolveModelRouteByCapability(appSlug, 'chat', requestedModel);
+    const route = await this.resolveAudienceRoute(appSlug, 'chat', requestedModel, payload, context);
     if (this.shouldProxyResponsesDirectly(route, payload)) {
       return this.forwardResponsesDirect(route, payload, context);
     }
@@ -907,6 +914,7 @@ export class AiChatService implements OnModuleInit {
     payload: Record<string, unknown>,
     context: AiInvocationContext,
   ): Promise<ResolvedAiRoute[]> {
+    routes = await this.applyRouteAudiencePolicy(routes, context);
     const resolver = this.aiExecutionPlanResolver;
     const revisions = this.aiConfigurationRevisionService;
     const appId = routes[0]?.app_id;
@@ -1012,6 +1020,63 @@ export class AiChatService implements OnModuleInit {
     }
   }
 
+  private async applyRouteAudiencePolicy(routes: ResolvedAiRoute[], context: AiInvocationContext): Promise<ResolvedAiRoute[]> {
+    if (!routes.length || routes[0].membership_route_enabled !== true) return routes;
+    if (!this.aiRouteAudiencePolicy) throw new BadGatewayException('AI route audience policy is unavailable');
+    const billingIntent = context.skip_points ? 'internal_non_billable' : 'customer_billed';
+    let audienceTier: 'FREE' | 'PAID' | null = null;
+    if (billingIntent === 'customer_billed') {
+      if (!context.audience_tier) {
+        if (!context.user_id) {
+          context.audience_tier = 'FREE';
+        } else {
+          const user = await this.prisma.user.findFirst({
+            where: { id: context.user_id, appId: routes[0].app_id, isActive: true, deletedAt: null },
+            select: { membershipType: true, membershipExpiresAt: true },
+          });
+          if (!user) throw new ForbiddenException('AI caller is not an active app user');
+          const appMembershipActive = user.membershipType === 'PREMIUM'
+            && (!user.membershipExpiresAt || user.membershipExpiresAt.getTime() > Date.now());
+          const aiMembership = appMembershipActive ? [] : await this.prisma.$queryRawUnsafe<Array<{ active: boolean }>>(
+            `SELECT EXISTS (
+               SELECT 1 FROM user_entitlements
+                WHERE app_id = $1::uuid AND user_id = $2::uuid
+                  AND scope = 'ai_membership' AND is_active = true
+                  AND starts_at <= now() AND (expires_at IS NULL OR expires_at > now())
+             ) AS active`,
+            routes[0].app_id,
+            context.user_id,
+          );
+          context.audience_tier = appMembershipActive || aiMembership[0]?.active ? 'PAID' : 'FREE';
+        }
+      }
+      audienceTier = context.audience_tier;
+    }
+    const filtered = this.aiRouteAudiencePolicy.filter({ routes, billing_intent: billingIntent, audience_tier: audienceTier });
+    context.route_audience_decision = filtered.decision;
+    return filtered.routes.map((route) => ({
+      ...route,
+      execution_plan_hash: createHash('sha256').update(JSON.stringify({
+        plan: route.execution_plan_hash || null,
+        audience_policy_hash: filtered.decision.policy_hash,
+        audience_tier: filtered.decision.audience_tier,
+      })).digest('hex'),
+    }));
+  }
+
+  private async resolveAudienceRoute(
+    appSlug: string,
+    capability: AiCapability,
+    requestedModel: string | undefined,
+    payload: Record<string, unknown>,
+    context: AiInvocationContext,
+  ): Promise<ResolvedAiRoute> {
+    const routes = await this.aiRoutingService.resolveModelRouteCandidatesByCapability(appSlug, capability, requestedModel);
+    const eligible = await this.applyDecoupledExecutionPlan(routes, appSlug, capability, requestedModel, payload, context);
+    if (!eligible[0]) throw new NotFoundException('No active AI route is available');
+    return eligible[0];
+  }
+
   private orderRoutesByPreferredRouteKey(
     routes: ResolvedAiRoute[],
     preferredRouteKey: string,
@@ -1103,12 +1168,12 @@ export class AiChatService implements OnModuleInit {
   ): Promise<ForwardedAiResponse> {
     const requestedModel = this.stringOrUndefined(payload.model);
     const effectivePayload = this.normalizeTtsVoiceAliases(payload);
-    const routes = (await this.aiRoutingService.resolveModelRouteCandidatesByCapability(appSlug, 'tts', requestedModel))
+    const matchingRoutes = (await this.aiRoutingService.resolveModelRouteCandidatesByCapability(appSlug, 'tts', requestedModel))
       .filter((route) => this.isVertexAiSource(route.source.provider_type, route.source.base_url));
-
-    if (routes.length === 0) {
+    if (matchingRoutes.length === 0) {
       throw new BadRequestException('Vertex AI TTS model route is not configured for this app');
     }
+    const routes = await this.applyDecoupledExecutionPlan(matchingRoutes, appSlug, 'tts', requestedModel, effectivePayload, context);
 
     return this.aiGatewayScheduler.invokeCandidates(routes, {
       payload: effectivePayload,
@@ -1130,12 +1195,12 @@ export class AiChatService implements OnModuleInit {
   ): Promise<ForwardedAiResponse> {
     const requestedModel = this.stringOrUndefined(payload.model);
     const effectivePayload = this.normalizeTtsVoiceAliases(payload);
-    const routes = (await this.aiRoutingService.resolveModelRouteCandidatesByCapability(appSlug, 'tts', requestedModel))
+    const matchingRoutes = (await this.aiRoutingService.resolveModelRouteCandidatesByCapability(appSlug, 'tts', requestedModel))
       .filter((route) => this.isGeminiSource(route.source.provider_type, route.source.base_url));
-
-    if (routes.length === 0) {
+    if (matchingRoutes.length === 0) {
       throw new BadRequestException('Google Gemini TTS model route is not configured for this app');
     }
+    const routes = await this.applyDecoupledExecutionPlan(matchingRoutes, appSlug, 'tts', requestedModel, effectivePayload, context);
 
     return this.aiGatewayScheduler.invokeCandidates(routes, {
       payload: effectivePayload,
@@ -1402,7 +1467,7 @@ export class AiChatService implements OnModuleInit {
     context: AiInvocationContext = {},
   ): Promise<ForwardedAiResponse> {
     const requestedModel = this.stringOrUndefined(payload.model);
-    const route = await this.aiRoutingService.resolveModelRouteByCapability(appSlug, 'tts', requestedModel);
+    const route = await this.resolveAudienceRoute(appSlug, 'tts', requestedModel, payload, context);
     if (this.normalizeApiType(route.api_type) !== MINIMAX_TTS_ASYNC_API_TYPE) {
       throw new BadRequestException('当前 TTS 模型不是 minimax-tts-async，无法查询异步任务');
     }
@@ -1438,7 +1503,7 @@ export class AiChatService implements OnModuleInit {
   ): Promise<ForwardedAiResponse> {
     const normalizedPayload = { ...payload };
     const requestedModel = this.stringOrUndefined(normalizedPayload.model);
-    const route = await this.aiRoutingService.resolveModelRouteByCapability(appSlug, 'video', requestedModel);
+    const route = await this.resolveAudienceRoute(appSlug, 'video', requestedModel, payload, context);
     if (this.shouldUseRunningHub(route)) {
       const startedAt = Date.now();
       let taskId: string | null = null;
@@ -1563,7 +1628,7 @@ export class AiChatService implements OnModuleInit {
     const appId = await this.resolveAppIdBySlug(appSlug);
     const queuedTask = await this.findDashscopeAsyncVideoTask(appId, taskId, context.user_id || null);
     if (queuedTask) {
-      const route = await this.aiRoutingService.resolveModelRouteByCapability(appSlug, 'video', queuedTask.model_key);
+      const route = await this.resolveAsyncTaskRoute(appSlug, queuedTask, context);
       if (this.shouldUseRunningHub(route)) {
         return this.queryRunningHubExternalVideoTask(route, queuedTask, context);
       }
@@ -1584,7 +1649,7 @@ export class AiChatService implements OnModuleInit {
       return this.queryDashscopeExternalVideoTask(route, latestTask, context);
     }
 
-    const route = await this.aiRoutingService.resolveModelRouteByCapability(appSlug, 'video', requestedModel);
+    const route = await this.resolveAudienceRoute(appSlug, 'video', requestedModel, payload, context);
     if (this.shouldUseRunningHub(route)) {
       const data = await this.fetchRunningHubTaskData(route, payload, taskId, context);
       await this.finalizeRunningHubVideoTaskIfTerminal(route, null, payload, data, taskId, context);
@@ -1676,6 +1741,7 @@ export class AiChatService implements OnModuleInit {
           },
           'actual',
         );
+        await this.applyVersionedUsagePricing(route, billing, usage, context);
         const settings = await this.aiPointsService.getSettingsByAppId(route.app_id);
         const pointsPerYuan = this.normalizePointsPerYuan(settings.points_per_yuan);
         const pointCharge = this.resolvePointsCharge(route, billing, pointsPerYuan);
@@ -1946,6 +2012,7 @@ export class AiChatService implements OnModuleInit {
       },
       'actual',
     );
+    await this.applyVersionedUsagePricing(route, billing, usage, context);
     const settings = await this.aiPointsService.getSettingsByAppId(route.app_id);
     const pointsPerYuan = this.normalizePointsPerYuan(settings.points_per_yuan);
     const pointCharge = this.resolvePointsCharge(route, billing, pointsPerYuan);
@@ -1994,6 +2061,7 @@ export class AiChatService implements OnModuleInit {
       app_slug: route.app_slug,
       model_key: route.model_key,
       upstream_model: route.upstream_model,
+      route_snapshot: this.snapshotAsyncRoute(route, context),
     };
 
     const rows = await (this.prisma.$queryRawUnsafe(
@@ -2022,6 +2090,64 @@ export class AiChatService implements OnModuleInit {
     return rows[0];
   }
 
+  private snapshotAsyncRoute(route: ResolvedAiRoute, context: AiInvocationContext): Record<string, unknown> {
+    return {
+      route_key: route.route_key,
+      source_id: route.source.id,
+      upstream_model: route.upstream_model,
+      upstream_model_id: route.upstream_model_id || null,
+      sell_price_version_id: route.sell_price_version_id || null,
+      upstream_cost_version_id: route.upstream_cost_version_id || null,
+      request_variant: route.request_variant || null,
+      configuration_revision: route.configuration_revision ?? null,
+      execution_plan_hash: route.execution_plan_hash || null,
+      decoupling_mode: route.decoupling_mode || null,
+      membership_route_enabled: route.membership_route_enabled === true,
+      audience_policy: route.audience_policy || null,
+      audience_tier: context.audience_tier || null,
+      route_audience_decision: context.route_audience_decision || null,
+    };
+  }
+
+  private async resolveAsyncTaskRoute(
+    appSlug: string,
+    task: DashscopeAsyncVideoTaskRow,
+    context: AiInvocationContext,
+  ): Promise<ResolvedAiRoute> {
+    const metadata = this.normalizeObject(task.metadata_json);
+    const snapshot = this.normalizeObject(metadata.route_snapshot);
+    const candidates = await this.aiRoutingService.resolveModelRouteCandidatesByCapability(appSlug, 'video', task.model_key);
+    const selected = candidates.find((route) => route.source.id === task.source_id
+      && route.upstream_model === task.upstream_model
+      && (!snapshot.route_key || route.route_key === snapshot.route_key));
+    if (!selected) throw new BadGatewayException('The original video upstream route is no longer available');
+    if (snapshot.audience_tier === 'FREE' || snapshot.audience_tier === 'PAID') {
+      context.audience_tier = snapshot.audience_tier;
+    }
+    const frozenRoute: ResolvedAiRoute = {
+      ...selected,
+      upstream_model_id: this.stringOrUndefined(snapshot.upstream_model_id) || selected.upstream_model_id || null,
+      sell_price_version_id: this.stringOrUndefined(snapshot.sell_price_version_id) || selected.sell_price_version_id || null,
+      upstream_cost_version_id: this.stringOrUndefined(snapshot.upstream_cost_version_id) || selected.upstream_cost_version_id || null,
+      request_variant: snapshot.request_variant && typeof snapshot.request_variant === 'object'
+        ? snapshot.request_variant as ResolvedAiRoute['request_variant'] : selected.request_variant,
+      configuration_revision: typeof snapshot.configuration_revision === 'number'
+        ? snapshot.configuration_revision : selected.configuration_revision,
+      execution_plan_hash: this.stringOrUndefined(snapshot.execution_plan_hash) || selected.execution_plan_hash || null,
+      decoupling_mode: snapshot.decoupling_mode === 'enforced' || snapshot.decoupling_mode === 'shadow'
+        ? snapshot.decoupling_mode : selected.decoupling_mode,
+      membership_route_enabled: typeof snapshot.membership_route_enabled === 'boolean'
+        ? snapshot.membership_route_enabled : false,
+      audience_policy: snapshot.audience_policy && typeof snapshot.audience_policy === 'object'
+        ? snapshot.audience_policy as ResolvedAiRoute['audience_policy'] : selected.audience_policy,
+    };
+    const eligible = await this.applyRouteAudiencePolicy([frozenRoute], context);
+    if (snapshot.route_audience_decision && typeof snapshot.route_audience_decision === 'object') {
+      context.route_audience_decision = snapshot.route_audience_decision as AiRouteAudienceDecision;
+    }
+    return eligible[0];
+  }
+
   private async createRunningHubAsyncVideoTask(
     route: ResolvedAiRoute,
     preparedPayload: Record<string, unknown>,
@@ -2039,6 +2165,7 @@ export class AiChatService implements OnModuleInit {
       app_slug: route.app_slug,
       model_key: route.model_key,
       upstream_model: route.upstream_model,
+      route_snapshot: this.snapshotAsyncRoute(route, context),
     };
     const status = String(extractRunningHubTaskStatus(response) || 'PENDING').toUpperCase().slice(0, 24);
 
@@ -2359,6 +2486,15 @@ export class AiChatService implements OnModuleInit {
       },
       'preflight',
     );
+    if (route.decoupling_mode === 'enforced') {
+      await this.applyVersionedUsagePricing(route, preflight, {
+        prompt_tokens: this.estimatePromptTokensForPreflight(payload),
+        uncached_input_tokens: preflight.billed_input_tokens,
+        completion_tokens: preflight.billed_output_tokens,
+        duration_seconds: preflight.billed_duration_seconds,
+        image_count: route.capability === 'image' ? preflight.billed_units : null,
+      }, context);
+    }
     const settings = await this.aiPointsService.getSettingsByAppId(route.app_id);
     const pointsPerYuan = this.normalizePointsPerYuan(settings.points_per_yuan);
     const requiredPoints = this.resolvePointsCharge(route, preflight, pointsPerYuan).points;
@@ -13664,7 +13800,6 @@ export class AiChatService implements OnModuleInit {
     const usageReferenceId =
       this.stringOrUndefined(input.usage_reference_id)
       || this.buildAiUsageReferenceId(route, requestId);
-    const pricingSnapshot = this.buildUsagePricingSnapshot(route, billing);
     const pointsReservation = input.billable !== false ? context.points_reservation || null : null;
     if (pointsReservation && context.points_reservation?.reservation_key === pointsReservation.reservation_key) {
       context.points_reservation = null;
@@ -13672,7 +13807,14 @@ export class AiChatService implements OnModuleInit {
 
     this.aiGatewayUsageQueue.enqueue('ai-usage-record-and-charge', async () => {
       let usageRecorded = false;
+      let pricingReady = route.decoupling_mode !== 'enforced';
       try {
+        const versionedUsage = await this.applyVersionedUsagePricing(route, billing, input.usage, context);
+        pricingReady = true;
+        const pricingSnapshot = this.buildUsagePricingSnapshot(route, billing, context.route_audience_decision);
+        const recordSnapshot = versionedUsage
+          ? { ...pricingSnapshot.snapshot, decoupling_v2: versionedUsage }
+          : pricingSnapshot.snapshot;
         await this.aiRoutingService.recordUsage({
           app_id: route.app_id,
           app_slug: route.app_slug,
@@ -13722,12 +13864,13 @@ export class AiChatService implements OnModuleInit {
           estimated_cost_rmb: billing.estimated_cost_rmb,
           points_cost: null,
           points_pricing_source: null,
-          pricing_snapshot_json: pricingSnapshot.snapshot,
-          pricing_snapshot_hash: pricingSnapshot.hash,
+          pricing_snapshot_json: recordSnapshot,
+          pricing_snapshot_hash: createHash('sha256').update(JSON.stringify(recordSnapshot)).digest('hex'),
           latency_ms: input.latency_ms ?? null,
           sell_price_version_id: route.sell_price_version_id || null,
           upstream_model_id: route.upstream_model_id || null,
           upstream_cost_version_id: route.upstream_cost_version_id || null,
+          customer_charge_rmb: billing.charge_rmb_override ?? null,
           configuration_revision: route.configuration_revision ?? null,
           execution_plan_hash: route.execution_plan_hash || null,
           snapshot_schema_version: (
@@ -13770,7 +13913,12 @@ export class AiChatService implements OnModuleInit {
         this.logger.warn(`failed to record AI usage log: ${error?.message || 'unknown error'}`);
       }
 
-      if (pointsReservation && input.billable !== false) {
+      if (!pricingReady) {
+        this.logger.error(`AI usage ${usageReferenceId} has no valid enforced price quote; keeping any points reservation pending`);
+        return;
+      }
+
+      if (pointsReservation && input.billable !== false && !context.skip_points) {
         try {
           const settlement = await this.settleReservedPointsForUsage(
             route,
@@ -13824,7 +13972,7 @@ export class AiChatService implements OnModuleInit {
         return;
       }
 
-      if (input.success && input.billable !== false) {
+      if (input.success && input.billable !== false && !context.skip_points) {
         try {
           const chargeResult = await this.chargeAiPointsForUsage(route, payload, context, {
             usage_reference_id: usageReferenceId,
@@ -13917,6 +14065,15 @@ export class AiChatService implements OnModuleInit {
       },
       'preflight',
     );
+    if (route.decoupling_mode === 'enforced') {
+      await this.applyVersionedUsagePricing(route, preflight, {
+        prompt_tokens: this.estimatePromptTokensForPreflight(payload),
+        uncached_input_tokens: preflight.billed_input_tokens,
+        completion_tokens: preflight.billed_output_tokens,
+        duration_seconds: preflight.billed_duration_seconds,
+        image_count: route.capability === 'image' ? preflight.billed_units : null,
+      }, context);
+    }
 
     const settings = await this.aiPointsService.getSettingsByAppId(route.app_id);
     const pointsPerYuan = this.normalizePointsPerYuan(settings.points_per_yuan);
@@ -14016,6 +14173,7 @@ export class AiChatService implements OnModuleInit {
   private buildUsagePricingSnapshot(
     route: ResolvedAiRoute,
     billing: Record<string, any>,
+    routeAudienceDecision?: AiRouteAudienceDecision | null,
   ): { snapshot: Record<string, unknown>; hash: string } {
     const snapshot = {
       version: 1,
@@ -14026,6 +14184,7 @@ export class AiChatService implements OnModuleInit {
       source_id: route.source.id,
       provider_type: route.source.provider_type,
       route_key: route.route_key || null,
+      route_audience: routeAudienceDecision || null,
       pricing_mode: billing.unit_price_mode || route.pricing_mode,
       rmb_prices: {
         per_mtoken: route.rmb_per_mtoken,
@@ -14064,6 +14223,70 @@ export class AiChatService implements OnModuleInit {
     return {
       snapshot,
       hash: createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'),
+    };
+  }
+
+  private priceBookMeter(route: ResolvedAiRoute, billing: Record<string, any>, usage: AiUsageMetrics): AiMeteredUsage {
+    const cacheWrite5m = this.normalizePositiveIntegerOrNull(usage.cache_creation_5m_input_tokens);
+    const cacheWrite1h = this.normalizePositiveIntegerOrNull(usage.cache_creation_1h_input_tokens);
+    return {
+      request_input_tokens: this.normalizePositiveIntegerOrNull(usage.prompt_tokens),
+      input_tokens: billing.billed_input_tokens ?? usage.uncached_input_tokens ?? usage.prompt_tokens ?? null,
+      cache_read_tokens: usage.cache_read_input_tokens ?? usage.cached_input_tokens ?? null,
+      cache_write_tokens: cacheWrite5m === null && cacheWrite1h === null ? usage.cache_creation_input_tokens ?? null : null,
+      cache_write_5m_tokens: cacheWrite5m,
+      cache_write_1h_tokens: cacheWrite1h,
+      output_tokens: billing.billed_output_tokens ?? usage.completion_tokens ?? null,
+      calls: billing.unit_price_mode === 'per_call' && route.capability !== 'image' ? billing.billed_units : null,
+      minutes: billing.unit_price_mode === 'per_minute' ? billing.billed_units : null,
+      images: route.capability === 'image' ? usage.image_count ?? billing.billed_units : null,
+      characters: billing.unit_price_mode === 'per_mchar' ? billing.billed_units : null,
+      duration_seconds: usage.duration_seconds ?? billing.billed_duration_seconds ?? null,
+    };
+  }
+
+  private async applyVersionedUsagePricing(
+    route: ResolvedAiRoute,
+    billing: Record<string, any>,
+    usage: AiUsageMetrics,
+    context: AiInvocationContext,
+  ): Promise<Record<string, unknown> | null> {
+    if (route.decoupling_mode !== 'enforced') return null;
+    if (!this.aiPriceBookService) throw new BadGatewayException('AI price book is unavailable');
+    const meter = this.priceBookMeter(route, billing, usage);
+    const [sellVersion, costVersion] = await Promise.all([
+      context.skip_points ? Promise.resolve(null) : route.sell_price_version_id
+        ? this.aiPriceBookService.getSellPriceById(route.sell_price_version_id)
+        : this.aiPriceBookService.resolveSellPrice(route.model_id),
+      route.upstream_cost_version_id
+        ? this.aiPriceBookService.getUpstreamCostById(route.upstream_cost_version_id)
+        : route.upstream_model_id
+          ? this.aiPriceBookService.resolveUpstreamCost(route.upstream_model_id)
+          : Promise.resolve(null),
+    ]);
+    if (!context.skip_points && !sellVersion) throw new BadGatewayException('AI product sell price is unavailable');
+    if (!costVersion) throw new BadGatewayException('AI upstream cost is unavailable');
+    const sell = context.skip_points ? null : this.aiPriceBookService.quoteCustomer(sellVersion, meter, route.request_variant as any);
+    const cost = this.aiPriceBookService.quoteUpstream(costVersion, meter, route.request_variant as any);
+    if (sell) {
+      const pointsPerYuan = sell.points <= 0 && sell.rmb > 0
+        ? this.normalizePointsPerYuan((await this.aiPointsService.getSettingsByAppId(route.app_id)).points_per_yuan)
+        : 0;
+      billing.points_cost_override = sell.points > 0 ? this.normalizePointsCharge(sell.points)
+        : sell.rmb > 0 ? this.convertRmbToPoints(sell.rmb, pointsPerYuan) : 0;
+      billing.charge_rmb_override = sell.rmb;
+      billing.points_pricing_source = sell.points > 0 ? 'model_points_price' : 'rmb_fallback';
+    }
+    billing.estimated_cost_rmb = cost.rmb;
+    return {
+      schema_version: 'ai-pricing-snapshot-v2',
+      sell_price_version_id: sellVersion?.id || null,
+      upstream_model_id: route.upstream_model_id || null,
+      upstream_cost_version_id: costVersion.id,
+      customer_quote: sell,
+      upstream_cost: cost,
+      meter,
+      captured_at: new Date().toISOString(),
     };
   }
 
@@ -14558,8 +14781,8 @@ export class AiChatService implements OnModuleInit {
     },
     pointsPerYuan: number,
   ): { points: number; source: 'model_points_price' | 'rmb_fallback' } {
-    const directPoints = Number(billing.points_cost_override || 0);
-    if (Number.isFinite(directPoints) && directPoints > 0) {
+    const directPoints = Number(billing.points_cost_override);
+    if (billing.points_cost_override !== null && billing.points_cost_override !== undefined && Number.isFinite(directPoints)) {
       return {
         points: this.normalizePointsCharge(directPoints),
         source: billing.points_pricing_source_override || 'model_points_price',

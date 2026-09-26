@@ -15,6 +15,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { AiGatewayObservabilityService } from './ai-gateway-observability.service';
+import { AiRouteAudiencePolicy, normalizeAiRouteAudiencePolicy, validateAiRouteAudiencePolicy } from './ai-route-audience-policy.service';
 import {
   RUNNINGHUB_DEFAULT_QUERY_PATH,
   RUNNINGHUB_DEFAULT_UPLOAD_PATH,
@@ -144,6 +145,7 @@ type AiGlobalModelRow = {
   is_default: boolean;
   is_active: boolean;
   is_visible: boolean;
+  membership_route_enabled: boolean;
   created_by_user_id: string | null;
   updated_by_user_id: string | null;
   created_at: Date;
@@ -189,6 +191,7 @@ type AiModelSourceRouteJoinedRow = {
   adapter_config_json?: unknown;
   execution_mode?: string | null;
   request_match?: unknown;
+  audience_policy_json?: unknown;
   endpoint_path: string | null;
   api_type: string | null;
   request_overrides: unknown;
@@ -359,6 +362,7 @@ export interface AiModelInput {
   is_default?: boolean;
   is_active?: boolean;
   is_visible?: boolean;
+  membership_route_enabled?: boolean;
 }
 
 export interface AiModelSourceRouteInput {
@@ -374,6 +378,7 @@ export interface AiModelSourceRouteInput {
   adapter_config_json?: Record<string, unknown> | null;
   execution_mode?: string | null;
   request_match?: Record<string, unknown> | null;
+  audience_policy?: AiRouteAudiencePolicy | Record<string, unknown> | null;
   endpoint_path?: string | null;
   api_type?: string | null;
   request_overrides?: Record<string, unknown> | null;
@@ -460,6 +465,8 @@ export interface ResolvedAiRoute {
   contract_version?: string | null;
   adapter_config_json?: Record<string, unknown>;
   request_match?: Record<string, unknown>;
+  membership_route_enabled?: boolean;
+  audience_policy?: AiRouteAudiencePolicy;
   configuration_revision?: number | null;
   execution_plan_hash?: string | null;
   decoupling_mode?: 'legacy' | 'shadow' | 'enforced' | null;
@@ -1608,6 +1615,8 @@ export class AiRoutingService implements OnModuleInit {
     const isDefault = !!payload.is_default;
     const isActive = payload.is_active !== false;
     const isVisible = payload.is_visible !== false;
+    const membershipRouteEnabled = payload.membership_route_enabled === true;
+    this.assertMembershipRouteCoverage(membershipRouteEnabled, sourceRouteInputs);
 
     if (!modelKey) {
       throw new BadRequestException('model_key is required');
@@ -1677,7 +1686,7 @@ export class AiRoutingService implements OnModuleInit {
          points_per_mtoken, points_per_call, points_per_minute,
          points_input_per_mtoken, points_cached_input_per_mtoken, points_cache_write_5m_per_mtoken, points_cache_write_1h_per_mtoken, points_output_per_mtoken,
          default_source_id, upstream_model, endpoint_path, api_type,
-         request_overrides, is_default, is_active, is_visible, created_by_user_id, updated_by_user_id
+         request_overrides, is_default, is_active, is_visible, created_by_user_id, updated_by_user_id, membership_route_enabled
        )
        VALUES (
          gen_random_uuid(), $1, $2, $3, $4, $5,
@@ -1685,7 +1694,7 @@ export class AiRoutingService implements OnModuleInit {
          $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13::numeric,
          $14::numeric, $15::numeric, $16::numeric,
          $17::numeric, $18::numeric, $19::numeric, $20::numeric, $21::numeric,
-         $22::uuid, $23, $24, $25, $26::jsonb, $27, $28, $29, $30::uuid, $30::uuid
+         $22::uuid, $23, $24, $25, $26::jsonb, $27, $28, $29, $30::uuid, $30::uuid, $31
        )
        RETURNING *`,
       modelKey,
@@ -1718,6 +1727,7 @@ export class AiRoutingService implements OnModuleInit {
       isActive,
       isVisible,
       actorUserId,
+      membershipRouteEnabled,
     ) as Promise<AiGlobalModelRow[]>);
 
     await this.replaceGlobalModelSourceRoutesIfProvided(inserted[0].id, actorUserId, payload.source_routes, {
@@ -1861,6 +1871,14 @@ export class AiRoutingService implements OnModuleInit {
     const nextIsDefault = payload.is_default === undefined ? existing.is_default : !!payload.is_default;
     const nextIsActive = payload.is_active === undefined ? existing.is_active : !!payload.is_active;
     const nextIsVisible = payload.is_visible === undefined ? existing.is_visible : !!payload.is_visible;
+    const nextMembershipRouteEnabled = payload.membership_route_enabled === undefined
+      ? existing.membership_route_enabled === true : payload.membership_route_enabled === true;
+    if (nextMembershipRouteEnabled) {
+      const coverageRoutes = payload.source_routes === undefined
+        ? this.serializeModelSourceRoutes(await this.listModelSourceRoutes(modelId, null, false))
+        : sourceRouteInputs;
+      this.assertMembershipRouteCoverage(true, coverageRoutes);
+    }
 
     if (!nextModelKey) {
       throw new BadRequestException('model_key is required');
@@ -1950,6 +1968,7 @@ export class AiRoutingService implements OnModuleInit {
            is_active = $28,
            is_visible = $29,
            updated_by_user_id = $30::uuid,
+           membership_route_enabled = $32,
            updated_at = now()
        WHERE id = $31::uuid`,
       nextModelKey,
@@ -1983,6 +2002,7 @@ export class AiRoutingService implements OnModuleInit {
       nextIsVisible,
       actorUserId,
       modelId,
+      nextMembershipRouteEnabled,
     );
 
     await this.replaceGlobalModelSourceRoutesIfProvided(modelId, actorUserId, payload.source_routes, {
@@ -2119,6 +2139,7 @@ export class AiRoutingService implements OnModuleInit {
     if (!model) {
       throw new NotFoundException('AI model not found');
     }
+    this.assertMembershipRouteCoverage(model.membership_route_enabled === true, this.normalizeModelSourceRouteInputs(payload?.items));
     const routes = await this.replaceModelSourceRoutes(modelId, null, actorUserId || '', payload?.items || [], {
       default_source_id: model.default_source_id,
       upstream_model: model.upstream_model,
@@ -3830,6 +3851,7 @@ export class AiRoutingService implements OnModuleInit {
       contract_version: this.normalizeNullableString(sourceRoute.contract_version, 64) || 'legacy-v1',
       adapter_config_json: this.normalizeObject(sourceRoute.adapter_config_json),
       request_match: this.normalizeObject(sourceRoute.request_match),
+      audience_policy: normalizeAiRouteAudiencePolicy(sourceRoute.audience_policy_json),
     });
   }
 
@@ -3846,6 +3868,7 @@ export class AiRoutingService implements OnModuleInit {
       contract_version?: string | null;
       adapter_config_json?: Record<string, unknown>;
       request_match?: Record<string, unknown>;
+      audience_policy?: AiRouteAudiencePolicy;
     } = {},
   ): ResolvedAiRoute {
     const mergedOverrides = {
@@ -3921,6 +3944,8 @@ export class AiRoutingService implements OnModuleInit {
       contract_version: routeMetadata.contract_version || 'legacy-v1',
       adapter_config_json: routeMetadata.adapter_config_json || {},
       request_match: routeMetadata.request_match || {},
+      membership_route_enabled: model.membership_route_enabled === true,
+      audience_policy: routeMetadata.audience_policy || normalizeAiRouteAudiencePolicy(undefined),
       sell_price_version_id: null,
       upstream_cost_version_id: null,
       configuration_revision: null,
@@ -4406,6 +4431,7 @@ export class AiRoutingService implements OnModuleInit {
       is_default: row.is_default,
       is_active: row.is_active,
       is_visible: row.is_visible,
+      membership_route_enabled: row.membership_route_enabled === true,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };
@@ -4562,6 +4588,7 @@ export class AiRoutingService implements OnModuleInit {
       adapter_config_json: this.normalizeObject(row.adapter_config_json),
       execution_mode: row.execution_mode || null,
       request_match: this.normalizeObject(row.request_match),
+      audience_policy: normalizeAiRouteAudiencePolicy(row.audience_policy_json),
       endpoint_path: row.endpoint_path || '',
       api_type: row.api_type || '',
       request_overrides: this.normalizeObject(row.request_overrides),
@@ -4736,12 +4763,25 @@ export class AiRoutingService implements OnModuleInit {
         adapter_config_json: this.normalizeObject(row.adapter_config_json),
         execution_mode: this.normalizeNullableString(row.execution_mode, 16),
         request_match: this.normalizeObject(row.request_match),
+        audience_policy: row.audience_policy === undefined
+          ? normalizeAiRouteAudiencePolicy(undefined)
+          : validateAiRouteAudiencePolicy(row.audience_policy),
         endpoint_path: this.normalizeNullableString(row.endpoint_path, 255),
         api_type: this.normalizeNullableString(row.api_type, 64),
         request_overrides: this.normalizeObject(row.request_overrides),
       });
     });
     return output;
+  }
+
+  private assertMembershipRouteCoverage(enabled: boolean, routes: Array<Pick<AiModelSourceRouteInput, 'is_active' | 'audience_policy'>>): void {
+    if (!enabled) return;
+    const active = routes.filter((route) => route.is_active !== false)
+      .map((route) => normalizeAiRouteAudiencePolicy(route.audience_policy).membership_access);
+    if (!active.some((access) => access === 'ALL' || access === 'FREE_ONLY')
+      || !active.some((access) => access === 'ALL' || access === 'PAID_ONLY')) {
+      throw new BadRequestException('Membership routing requires active routes for both free and paid users');
+    }
   }
 
   private normalizeRouteKey(value: unknown): string {
@@ -4797,6 +4837,8 @@ export class AiRoutingService implements OnModuleInit {
     for (const route of normalized) {
       await this.ensureGlobalSourceExists(String(route.source_id));
     }
+    const model = await this.getGlobalModelRowById(modelId);
+    this.assertMembershipRouteCoverage(model?.membership_route_enabled === true, normalized);
     const appIdValue = appId ? this.normalizeNullableUuid(appId) : null;
     const decouplingColumnsReady = await this.isModelSourceRouteDecouplingColumnsAvailable();
     await this.prisma.$transaction(async (tx) => {
@@ -4817,14 +4859,14 @@ export class AiRoutingService implements OnModuleInit {
             `INSERT INTO ai_model_source_routes (
                id, route_key, app_id, global_model_id, source_id, sort_order, is_active,
                upstream_model, upstream_model_id, variant_key, match_priority, contract_version,
-               adapter_config_json, execution_mode, request_match,
+               adapter_config_json, execution_mode, request_match, audience_policy_json,
                endpoint_path, api_type, request_overrides,
                created_by_user_id, updated_by_user_id
              )
              VALUES (
                gen_random_uuid(), $1, $2::uuid, $3::uuid, $4::uuid, $5, $6,
                $7, $8::uuid, $9, $10, $11,
-               $12::jsonb, $13, $14::jsonb,
+               $12::jsonb, $13, $14::jsonb, $19::jsonb,
                $15, $16, $17::jsonb,
                $18::uuid, $18::uuid
              )`,
@@ -4846,17 +4888,18 @@ export class AiRoutingService implements OnModuleInit {
             this.normalizeNullableString(route.api_type, 64),
             JSON.stringify(this.normalizeObject(route.request_overrides)),
             actorUserId || null,
+            JSON.stringify(normalizeAiRouteAudiencePolicy(route.audience_policy)),
           );
         } else {
           await tx.$executeRawUnsafe(
             `INSERT INTO ai_model_source_routes (
                id, route_key, app_id, global_model_id, source_id, sort_order, is_active,
-               upstream_model, endpoint_path, api_type, request_overrides,
+               upstream_model, endpoint_path, api_type, request_overrides, audience_policy_json,
                created_by_user_id, updated_by_user_id
              )
              VALUES (
                gen_random_uuid(), $1, $2::uuid, $3::uuid, $4::uuid, $5, $6,
-               $7, $8, $9, $10::jsonb,
+               $7, $8, $9, $10::jsonb, $12::jsonb,
                $11::uuid, $11::uuid
              )`,
             route.route_key,
@@ -4870,6 +4913,7 @@ export class AiRoutingService implements OnModuleInit {
             this.normalizeNullableString(route.api_type, 64),
             JSON.stringify(this.normalizeObject(route.request_overrides)),
             actorUserId || null,
+            JSON.stringify(normalizeAiRouteAudiencePolicy(route.audience_policy)),
           );
         }
       }

@@ -2464,7 +2464,15 @@ export interface PlatformAiModelSourceRouteItem {
   source_is_active: boolean;
   sort_order: number;
   is_active: boolean;
+  audience_policy?: { schema_version?: string; membership_access: 'ALL' | 'FREE_ONLY' | 'PAID_ONLY' };
   upstream_model?: string;
+  upstream_model_id?: string | null;
+  variant_key?: string | null;
+  match_priority?: number | null;
+  contract_version?: string | null;
+  adapter_config_json?: Record<string, unknown>;
+  execution_mode?: string | null;
+  request_match?: Record<string, unknown>;
   endpoint_path?: string;
   api_type?: string;
   request_overrides?: Record<string, unknown>;
@@ -2507,6 +2515,7 @@ export interface PlatformAiModelItem {
   is_default: boolean;
   is_active: boolean;
   is_visible: boolean;
+  membership_route_enabled?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -4605,7 +4614,15 @@ export const platformApi = {
         source_id: string;
         sort_order?: number;
         is_active?: boolean;
+        audience_policy?: { membership_access: 'ALL' | 'FREE_ONLY' | 'PAID_ONLY' };
         upstream_model?: string | null;
+        upstream_model_id?: string | null;
+        variant_key?: string | null;
+        match_priority?: number | null;
+        contract_version?: string | null;
+        adapter_config_json?: Record<string, unknown>;
+        execution_mode?: string | null;
+        request_match?: Record<string, unknown>;
         endpoint_path?: string | null;
         api_type?: string | null;
         request_overrides?: Record<string, unknown>;
@@ -4617,6 +4634,7 @@ export const platformApi = {
       is_default?: boolean;
       is_active?: boolean;
       is_visible?: boolean;
+      membership_route_enabled?: boolean;
     }
   ) => {
     const response = await apiClient.getClient().post('/platform-admin/ai/models', payload);
@@ -4718,7 +4736,15 @@ export const platformApi = {
         source_id: string;
         sort_order?: number;
         is_active?: boolean;
+        audience_policy?: { membership_access: 'ALL' | 'FREE_ONLY' | 'PAID_ONLY' };
         upstream_model?: string | null;
+        upstream_model_id?: string | null;
+        variant_key?: string | null;
+        match_priority?: number | null;
+        contract_version?: string | null;
+        adapter_config_json?: Record<string, unknown>;
+        execution_mode?: string | null;
+        request_match?: Record<string, unknown>;
         endpoint_path?: string | null;
         api_type?: string | null;
         request_overrides?: Record<string, unknown>;
@@ -4730,6 +4756,7 @@ export const platformApi = {
       is_default?: boolean;
       is_active?: boolean;
       is_visible?: boolean;
+      membership_route_enabled?: boolean;
     }
   ) => {
     const response = await apiClient.getClient().put(`/platform-admin/ai/models/${modelId}`, payload);
@@ -4756,6 +4783,45 @@ export const platformApi = {
     },
   ) => {
     const response = await apiClient.getClient().put(`/platform-admin/ai/models/${modelId}/sources`, payload);
+    return response.data as { items: PlatformAiModelSourceRouteItem[] };
+  },
+
+  listAiUpstreamCatalog: async (params?: { source_id?: string; capability?: string }) => {
+    const response = await apiClient.getClient().get('/platform-admin/ai/upstreams', { params });
+    return response.data as { items: Array<{ id: string; source_id: string; upstream_model: string; upstream_key: string }> };
+  },
+
+  upsertAiUpstreamCatalog: async (payload: { source_id: string; upstream_key: string; upstream_model: string; capability: string }) => {
+    const response = await apiClient.getClient().post('/platform-admin/ai/upstreams', payload);
+    return response.data as { id: string };
+  },
+
+  getAiProductSellPrice: async (modelId: string) => {
+    const response = await apiClient.getClient().get(`/platform-admin/ai/products/${modelId}/sell-price`);
+    return response.data as { item: { id: string; rates_json: Record<string, unknown> } | null };
+  },
+
+  saveAiProductSellPrice: async (modelId: string, rates: Record<string, unknown>) => {
+    const response = await apiClient.getClient().post(`/platform-admin/ai/products/${modelId}/sell-price`, {
+      status: 'active', replace_active: true, rates_json: rates,
+    });
+    return response.data;
+  },
+
+  getAiUpstreamCostPrice: async (upstreamModelId: string) => {
+    const response = await apiClient.getClient().get(`/platform-admin/ai/upstreams/${upstreamModelId}/cost-price`);
+    return response.data as { item: { id: string; rates_json: Record<string, unknown> } | null };
+  },
+
+  saveAiUpstreamCostPrice: async (upstreamModelId: string, rates: Record<string, unknown>) => {
+    const response = await apiClient.getClient().post(`/platform-admin/ai/upstreams/${upstreamModelId}/cost-price`, {
+      status: 'active', replace_active: true, rates_json: rates,
+    });
+    return response.data;
+  },
+
+  replaceAiProductRoutes: async (modelId: string, items: PlatformAiModelSourceRouteItem[]) => {
+    const response = await apiClient.getClient().put(`/platform-admin/ai/products/${modelId}/routes`, { items });
     return response.data as { items: PlatformAiModelSourceRouteItem[] };
   },
 

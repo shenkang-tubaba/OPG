@@ -20,6 +20,7 @@ import { AiUpstreamCatalogService } from './ai-upstream-catalog.service';
 import { AiPriceBookService } from './ai-price-book.service';
 import { AiConfigurationRevisionService } from './ai-configuration-revision.service';
 import { AiExecutionPlanResolverService } from './ai-execution-plan-resolver.service';
+import { AiRouteAudiencePolicyService } from './ai-route-audience-policy.service';
 import { AuthModule } from '../auth/auth.module';
 import { AiDebugAuthService } from './guards/ai-debug-auth.service';
 import { AiDebugJwtAuthGuard } from './guards/ai-debug-jwt-auth.guard';
@@ -52,6 +53,7 @@ import { AdminNotificationsModule } from '../admin-notifications/admin-notificat
     AiPriceBookService,
     AiConfigurationRevisionService,
     AiExecutionPlanResolverService,
+    AiRouteAudiencePolicyService,
     AiDebugAuthService,
     AiDebugJwtAuthGuard,
     OpenAiCompatAuthGuard,

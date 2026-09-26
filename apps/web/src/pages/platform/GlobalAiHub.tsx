@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AiUsageInsightsPanel from '@/pages/platform/components/AiUsageInsightsPanel';
+import AiCommercialPricingPanel from '@/pages/platform/components/AiCommercialPricingPanel';
 import {
   PlatformAiUsageBreakdown,
   PlatformAiGatewayRuntime,
   PlatformAiModelBatchConnectivityTestResult,
   PlatformAiModelConnectivityTestResult,
   PlatformAiModelItem,
+  PlatformAiModelSourceRouteItem,
   PlatformAiSourceConnectivityTestResult,
   PlatformAiSourceItem,
   PlatformAiUsageLogItem,
@@ -133,6 +135,7 @@ interface AiModelForm {
   is_default: boolean;
   is_active: boolean;
   is_visible: boolean;
+  membership_route_enabled: boolean;
   source_routes: AiModelSourceRouteForm[];
 }
 
@@ -170,6 +173,15 @@ interface AiModelSourceRouteForm {
   route_key: string;
   source_id: string;
   is_active: boolean;
+  membership_access: 'ALL' | 'FREE_ONLY' | 'PAID_ONLY';
+  upstream_model_id?: string | null;
+  linked_upstream_model?: string;
+  variant_key?: string | null;
+  match_priority?: number | null;
+  contract_version?: string | null;
+  adapter_config_json?: Record<string, unknown>;
+  execution_mode?: string | null;
+  request_match?: Record<string, unknown>;
   upstream_model: string;
   endpoint_path: string;
   api_type: string;
@@ -570,6 +582,7 @@ const EMPTY_AI_MODEL_FORM: AiModelForm = {
   is_default: false,
   is_active: true,
   is_visible: true,
+  membership_route_enabled: false,
   source_routes: [],
 };
 
@@ -964,17 +977,21 @@ function assignVideoResolutionRates(
 }
 
 function buildModelSourceRoutesFromItem(item: PlatformAiModelItem): AiModelSourceRouteForm[] {
-  const routes = Array.isArray(item.source_routes) && item.source_routes.length > 0
+  const routes: PlatformAiModelSourceRouteItem[] = Array.isArray(item.source_routes) && item.source_routes.length > 0
     ? item.source_routes
     : [{
         id: null,
         route_key: item.default_source_id,
         source_id: item.default_source_id,
+        source_name: item.default_source_name,
+        source_provider_type: item.default_source_provider_type,
+        source_is_active: item.default_source_is_active,
         is_active: item.default_source_is_active,
         sort_order: 0,
         upstream_model: item.upstream_model,
         endpoint_path: item.endpoint_path,
         api_type: item.api_type,
+        audience_policy: { membership_access: 'ALL' as const },
         request_overrides: {},
       }];
   return routes
@@ -984,6 +1001,15 @@ function buildModelSourceRoutesFromItem(item: PlatformAiModelItem): AiModelSourc
       route_key: String(route.route_key || route.id || createModelSourceRouteKey(route.source_id)),
       source_id: route.source_id,
       is_active: route.is_active !== false,
+      membership_access: route.audience_policy?.membership_access || 'ALL',
+      upstream_model_id: route.upstream_model_id || null,
+      linked_upstream_model: String(route.upstream_model || ''),
+      variant_key: route.variant_key,
+      match_priority: route.match_priority,
+      contract_version: route.contract_version,
+      adapter_config_json: route.adapter_config_json,
+      execution_mode: route.execution_mode,
+      request_match: route.request_match,
       upstream_model: String(route.upstream_model || ''),
       endpoint_path: String(route.endpoint_path || ''),
       api_type: String(route.api_type || ''),
@@ -996,6 +1022,7 @@ function buildDefaultModelSourceRoute(sourceId: string): AiModelSourceRouteForm 
     route_key: createModelSourceRouteKey(sourceId),
     source_id: sourceId,
     is_active: true,
+    membership_access: 'ALL',
     upstream_model: '',
     endpoint_path: '',
     api_type: '',
@@ -1080,6 +1107,7 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
 
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const [modelModalOpen, setModelModalOpen] = useState(false);
+  const [commercialModel, setCommercialModel] = useState<PlatformAiModelItem | null>(null);
 
   const [sourceQuery, setSourceQuery] = useState('');
   const [sourceProviderFilter, setSourceProviderFilter] = useState<string>('ALL');
@@ -1922,6 +1950,7 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
       is_default: item.is_default,
       is_active: item.is_active,
       is_visible: item.is_visible !== false,
+      membership_route_enabled: item.membership_route_enabled === true,
       source_routes: buildModelSourceRoutesFromItem(item),
     };
     setAiModelForm(
@@ -2604,6 +2633,15 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
             source_id: item.source_id,
             sort_order: index,
             is_active: item.is_active,
+            audience_policy: { membership_access: item.membership_access },
+            upstream_model_id: item.upstream_model.trim() === item.linked_upstream_model
+              ? item.upstream_model_id || null : null,
+            variant_key: item.variant_key,
+            match_priority: item.match_priority,
+            contract_version: item.contract_version,
+            adapter_config_json: item.adapter_config_json,
+            execution_mode: item.execution_mode,
+            request_match: item.request_match,
             upstream_model: item.upstream_model.trim() || (isAudioRoute ? (isMinimaxVoiceCloneModel ? resolveDefaultVoiceCloneModel(routeSource?.provider_type) : resolveDefaultAudioSpeechModel(routeSource?.provider_type)) : null),
             endpoint_path: isAudioRoute
               ? isMinimaxVoiceCloneModel ? resolveAudioVoiceCloneEndpoint(routeSource?.provider_type) : resolveAudioSpeechEndpoint(routeSource?.provider_type)
@@ -2616,6 +2654,13 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
         });
       if (sourceRoutes.length === 0) {
         throw new Error('至少选择一个供应商');
+      }
+      if (aiModelForm.membership_route_enabled) {
+        const active = sourceRoutes.filter((item) => item.is_active).map((item) => item.audience_policy.membership_access);
+        if (!active.some((access) => access === 'ALL' || access === 'FREE_ONLY')
+          || !active.some((access) => access === 'ALL' || access === 'PAID_ONLY')) {
+          throw new Error('免费用户和会员都需要至少一条启用的线路');
+        }
       }
       const primarySourceId = sourceRoutes.find((item) => item.is_active)?.source_id || sourceRoutes[0].source_id;
       const primarySource = aiSourceMap.get(primarySourceId);
@@ -2666,6 +2711,7 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
         is_default: isMinimaxVoiceCloneModel ? false : aiModelForm.is_default,
         is_active: aiModelForm.is_active,
         is_visible: aiModelForm.is_visible,
+        membership_route_enabled: aiModelForm.membership_route_enabled,
       };
 
       if (aiModelForm.editing_id) {
@@ -2838,6 +2884,7 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
             >
               编辑
             </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setCommercialModel(item)}>价格</button>
             {!item.is_default && !itemIsVoiceClone && (
               <button
                 className="btn btn-secondary btn-sm"
@@ -3987,6 +4034,14 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
               )}
               <div className="form-group span-2">
                 <label>来源优先级</label>
+                <label className="checkbox-inline">
+                  <input
+                    type="checkbox"
+                    checked={aiModelForm.membership_route_enabled}
+                    onChange={(event) => setAiModelForm((prev) => ({ ...prev, membership_route_enabled: event.target.checked }))}
+                  />
+                  按会员等级选择线路
+                </label>
                 <select
                   value=""
                   onChange={(event) => {
@@ -4030,6 +4085,19 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
                           />
                           启用
                         </label>
+                        {aiModelForm.membership_route_enabled && (
+                          <div className="form-group">
+                            <label>适用用户</label>
+                            <select
+                              value={route.membership_access}
+                              onChange={(event) => updateModelSourceRoute(index, { membership_access: event.target.value as AiModelSourceRouteForm['membership_access'] })}
+                            >
+                              <option value="ALL">所有用户</option>
+                              <option value="FREE_ONLY">仅免费用户</option>
+                              <option value="PAID_ONLY">仅会员</option>
+                            </select>
+                          </div>
+                        )}
                         <div className="platform-form-grid compact">
                           <div className="form-group">
                             <label>上游模型名</label>
@@ -4320,6 +4388,14 @@ export default function GlobalAiHub({ fixedTab, hideTopTabSwitcher = false, hide
             )}
           </div>
         </div>
+      )}
+
+      {commercialModel && (
+        <AiCommercialPricingPanel
+          model={commercialModel}
+          onClose={() => setCommercialModel(null)}
+          onChanged={loadData}
+        />
       )}
     </div>
   );

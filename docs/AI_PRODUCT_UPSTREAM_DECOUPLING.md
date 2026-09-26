@@ -81,6 +81,18 @@ DATABASE_URL=... npx tsx scripts/backfill-ai-product-upstream-decoupling.ts
 - `POST /execution-plan/preview`
 - `GET /decoupling/mode`
 
+## 会员线路与独立价格
+
+- 模型的 `membership_route_enabled` 默认关闭。开启后，每条 `source_routes` 可设 `audience_policy.membership_access` 为 `ALL`、`FREE_ONLY` 或 `PAID_ONLY`。管理 API 与模型编辑页都会要求免费和会员各有至少一条启用线路。
+- 会员身份由服务端按当前 App 的有效 `users.membership_type = PREMIUM`、未过期会员时间或有效 `ai_membership` 权益解析。请求中传入的会员等级不可信。候选在调度、黏性线路和故障切换之前过滤；所有协议共用这一候选集合。
+- 异步视频任务把线路键、上游模型、售价与成本版本、会员判定存入任务 metadata。续查使用原始线路；原始线路已删除时返回不可用，不会切到其他成本线路。
+- 管理页“价格”分别保存产品模型的对外售价和每条来源线路的上游成本。二者使用独立版本表和独立规则；首次保存时不会从旧价格字段推导任何金额。
+- `enforced` 模式在请求前用售价版本预估积分，实际用量用售价版本结算积分、用成本版本记录上游成本。`legacy` 和 `shadow` 模式沿用旧扣费结果。需要先执行 `20260926_120000_ai_model_membership_routing` 迁移及原有解耦回填，再按本文上线步骤验证并切换模式。
+- `enforced` 模式若实际用量的版本价本无法读取，会记录异常并停止旧价扣费；已建立的积分预留保持待结算，需排查价本或数据库后人工处理。
+- 价格规则中的 token 与字符单价按每百万单位填写；`call`、`minute`、`second`、`image` 按各自单位填写。可用 `dimension_rates` 按请求参数配置不同图片、视频等价格。
+
+CLI、MCP 和 SDK 检查：`packages/sdk` 已提供 `platform.ai.decoupling` 的上游、售价、成本和线路管理方法，输入为通用对象，新增会员字段可以透传。CLI/MCP 面向租户调用者，不暴露平台管理员的商业价格修改；公开调用协议和模型键没有变化，因此无需新增 CLI/MCP 工具。`docs/CLI_USAGE.md` 的调用方式保持有效。
+
 ## 明确不做（本轮）
 
 - 会员折扣 / 团队计费账户 / 毛利报表 UI（ArtiSales 商业化专属）
