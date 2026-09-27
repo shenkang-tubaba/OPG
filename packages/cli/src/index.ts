@@ -149,7 +149,6 @@ async function initProject(flags: Record<string, string>) {
       '.env.local',
       [
         `OPG_BASE_URL=${config.baseUrl}`,
-        ...(config.app ? [`OPG_APP_SLUG=${config.app}`, `OPG_API_KEY=${config.apiKey || 'rbx_replace_me'}`] : []),
         '',
       ].join('\n'),
     );
@@ -181,7 +180,7 @@ async function loginProject(flags: Record<string, string>) {
   const local = await readOptionalLocalConfig();
   const config = {
     baseUrl: flags.baseUrl || flags['base-url'] || local.baseUrl || '',
-    app: flags.app || local.app || '',
+    app: flags.app || '',
     apiKey: '',
     platformToken: '',
     profile: flags.profile || local.profile || 'default',
@@ -831,6 +830,138 @@ async function runPlatformCommand(commandArgs: string[]) {
     }
   }
 
+  if (resource === 'observability') {
+    const appId = flags.appId || flags['app-id'] || '';
+    const query = parseQueryPayload(flags);
+    if (action === 'runtime') {
+      printJson(await client.observability.runtime());
+      return;
+    }
+    if (action === 'requests' || action === 'audits') {
+      const method = action === 'requests' ? 'requestEvents' : 'auditEvents';
+      const appMethod = action === 'requests' ? 'appRequestEvents' : 'appAuditEvents';
+      printJson(appId
+        ? await client.observability[appMethod](appId, query)
+        : await client.observability[method](query));
+      return;
+    }
+  }
+
+  if (resource === 'ai') {
+    const subAction = positionalArgs(commandArgs.slice(2))[0] || 'list';
+    const query = parseQueryPayload(flags);
+    if (flags.appId || flags['app-id']) query.app_id = flags.appId || flags['app-id'];
+    if (action === 'health') { printJson(await client.ai.providerHealth(query)); return; }
+    if (action === 'requests') { printJson(await client.ai.requestEvents(query)); return; }
+    if (action === 'audits') { printJson(await client.ai.auditEvents(query)); return; }
+    if (action === 'runtime') { printJson(await client.ai.gatewayRuntime()); return; }
+    if (action === 'sources' || action === 'models') {
+      const target = action === 'sources' ? client.ai.sources : client.ai.models;
+      const id = flags.id || flags.sourceId || flags['source-id'] || flags.modelId || flags['model-id'] || '';
+      if (subAction === 'list') { printJson(await target.list(query)); return; }
+      if (subAction === 'create') { printJson(await target.create(parseJsonPayload(flags))); return; }
+      if (subAction === 'test') {
+        printJson(await (action === 'sources'
+          ? client.ai.sources.test!(parseJsonPayload(flags))
+          : client.ai.models.test!(parseJsonPayload(flags))));
+        return;
+      }
+      if (!id) throw new Error(`Missing ${action === 'sources' ? 'source' : 'model'} id. Pass --id <id>.`);
+      if (subAction === 'update') { printJson(await target.update(id, parseJsonPayload(flags))); return; }
+      if (subAction === 'delete') { printJson(await target.delete(id)); return; }
+    }
+  }
+
+  if (resource === 'app-ai') {
+    const appId = requirePlatformAppId(flags);
+    const id = flags.id || flags.modelId || flags['model-id'] || flags.capability || flags.slotKey || flags['slot-key'] || '';
+    if (action === 'routes') {
+      if (!id) { printJson(await client.apps.ai.modelRoutes(appId)); return; }
+      if (flags.delete === 'true') { printJson(await client.apps.ai.deleteModelRoute(appId, id)); return; }
+      printJson(await client.apps.ai.upsertModelRoute(appId, id, parseJsonPayload(flags)));
+      return;
+    }
+    if (action === 'defaults' || action === 'slots') {
+      const isSlot = action === 'slots';
+      if (!id) { printJson(await (isSlot ? client.apps.ai.defaultModelSlots(appId) : client.apps.ai.defaultModels(appId))); return; }
+      if (flags.delete === 'true') {
+        printJson(await (isSlot ? client.apps.ai.deleteDefaultModelSlot(appId, id) : client.apps.ai.deleteDefaultModel(appId, id)));
+        return;
+      }
+      printJson(await (isSlot ? client.apps.ai.setDefaultModelSlot(appId, id, parseJsonPayload(flags)) : client.apps.ai.setDefaultModel(appId, id, parseJsonPayload(flags))));
+      return;
+    }
+    if (action === 'points') {
+      printJson(await (flags.json ? client.apps.ai.updatePointsSettings(appId, parseJsonPayload(flags)) : client.apps.ai.pointsSettings(appId)));
+      return;
+    }
+  }
+
+  if (resource === 'site' || resource === 'email-settings') {
+    const appId = requirePlatformAppId(flags);
+    if (action === 'get') {
+      printJson(await (resource === 'site' ? client.apps.site.config(appId) : client.apps.email.settings(appId)));
+      return;
+    }
+    if (action === 'update') {
+      printJson(await (resource === 'site' ? client.apps.site.updateConfig(appId, parseJsonPayload(flags)) : client.apps.email.updateSettings(appId, parseJsonPayload(flags))));
+      return;
+    }
+  }
+
+  if (resource === 'admins') {
+    const appId = requirePlatformAppId(flags);
+    const adminId = flags.adminId || flags['admin-id'] || '';
+    if (action === 'list') { printJson(await client.apps.admins.list(appId)); return; }
+    if (action === 'create') { printJson(await client.apps.admins.create(appId, parseJsonPayload(flags))); return; }
+    if (!adminId) throw new Error('Missing admin id. Pass --admin-id <id>.');
+    if (action === 'permissions') { printJson(await client.apps.admins.updatePermissions(appId, adminId, parseJsonPayload(flags))); return; }
+    if (action === 'status') { printJson(await client.apps.admins.updateStatus(appId, adminId, parseJsonPayload(flags))); return; }
+    if (action === 'delete') { printJson(await client.apps.admins.remove(appId, adminId)); return; }
+  }
+
+  if (resource === 'settings') {
+    const subAction = positionalArgs(commandArgs.slice(2))[0] || 'list';
+    const targets = {
+      storage: client.storageProviders,
+      sms: client.sms.providers,
+      'sms-signatures': client.sms.signatures,
+      'sms-templates': client.sms.templates,
+      payments: client.payments.methods,
+      email: client.email.providers,
+      'email-senders': client.email.senders,
+      'email-cloudflare': client.email.cloudflareAccounts,
+      'login-wechat': client.oauth.wechatOpenApps,
+      'login-google': client.oauth.googleClients,
+      'login-github': client.oauth.githubApps,
+      'login-apple': client.oauth.appleCredentials,
+      proxies: client.proxies,
+    };
+    const target = targets[action as keyof typeof targets];
+    if (!target) throw new Error(`Unknown settings area: ${action}`);
+    if (subAction === 'list') { printJson(await target.list(parseQueryPayload(flags))); return; }
+    if (subAction === 'create') { printJson(await target.create(parseJsonPayload(flags))); return; }
+    const id = flags.id || '';
+    if (!id) throw new Error('Missing setting id. Pass --id <id>.');
+    if (subAction === 'update') { printJson(await target.update(id, parseJsonPayload(flags))); return; }
+    if (subAction === 'delete') { printJson(await target.delete(id)); return; }
+  }
+
+  if (resource === 'jobs') {
+    const appId = flags.appId || flags['app-id'] || '';
+    const taskId = flags.taskId || flags['task-id'] || '';
+    if (action === 'runtime') { printJson(await client.tasks.runtime()); return; }
+    if (action === 'list') {
+      printJson(await (appId ? client.tasks.listForApp(appId, parseQueryPayload(flags)) : client.tasks.list(parseQueryPayload(flags))));
+      return;
+    }
+    if (action === 'get') {
+      if (!taskId) throw new Error('Missing task id. Pass --task-id <id>.');
+      printJson(await (appId ? client.tasks.getForApp(appId, taskId) : client.tasks.get(taskId)));
+      return;
+    }
+  }
+
   if (resource === 'feedbacks' || resource === 'feedback') {
     const appId = requirePlatformAppId(flags);
     if (action === 'list') {
@@ -1365,6 +1496,8 @@ async function runPlatformCommand(commandArgs: string[]) {
       method: (flags.method || 'GET').toUpperCase(),
       query: flags.query ? JSON.parse(flags.query) : undefined,
       body: flags.json ? JSON.parse(flags.json) : undefined,
+      timeoutMs: flags.timeout ? Number(flags.timeout) * 1000 : undefined,
+      idempotencyKey: flags.idempotencyKey || flags['idempotency-key'],
     }));
     return;
   }
@@ -2699,6 +2832,70 @@ async function startMcpServer() {
   );
 
   registerTool(
+    'opg_platform_request_events',
+    {
+      title: 'Inspect OPG Platform Request Errors',
+      description: 'List platform request events, optionally scoped to an app, request id, HTTP status, or date range.',
+      inputSchema: {
+        appId: z.string().optional(),
+        requestId: z.string().optional(),
+        statusMin: z.number().int().optional(),
+        days: z.number().int().min(1).max(365).optional(),
+        page: z.number().int().min(1).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ appId, requestId, statusMin, days, page }: any) => {
+      const query = { request_id: requestId, status_min: statusMin, days, page };
+      return toToolResult(appId
+        ? await platformClient.observability.appRequestEvents(appId, query)
+        : await platformClient.observability.requestEvents(query));
+    },
+  );
+
+  registerTool(
+    'opg_platform_audit_events',
+    {
+      title: 'Inspect OPG Platform Audit Events',
+      description: 'List platform configuration and administrative changes, optionally scoped to an app or request id.',
+      inputSchema: {
+        appId: z.string().optional(),
+        requestId: z.string().optional(),
+        days: z.number().int().min(1).max(365).optional(),
+        page: z.number().int().min(1).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ appId, requestId, days, page }: any) => {
+      const query = { request_id: requestId, days, page };
+      return toToolResult(appId
+        ? await platformClient.observability.appAuditEvents(appId, query)
+        : await platformClient.observability.auditEvents(query));
+    },
+  );
+
+  registerTool(
+    'opg_platform_ai_provider_health',
+    {
+      title: 'Inspect OPG AI Provider Health',
+      description: 'List global AI provider health records for diagnosing source or model failures.',
+      inputSchema: {
+        sourceId: z.string().optional(),
+        modelId: z.string().optional(),
+        status: z.string().optional(),
+        page: z.number().int().min(1).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ sourceId, modelId, status, page }: any) => toToolResult(await platformClient.ai.providerHealth({
+      source_id: sourceId,
+      model_id: modelId,
+      status,
+      page,
+    })),
+  );
+
+  registerTool(
     'opg_platform_request',
     {
       title: 'Call OPG Platform API',
@@ -2708,10 +2905,14 @@ async function startMcpServer() {
         path: z.string().min(1).describe('Path under /api/v1/platform-admin, for example /apps or /storage/providers.'),
         query: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
         body: z.record(z.unknown()).optional(),
+        timeoutMs: z.number().int().min(100).max(600_000).optional(),
+        idempotencyKey: z.string().min(1).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ method, path, query, body }: any) => toToolResult(await platformClient.request(path, { method, query, body })),
+    async ({ method, path, query, body, timeoutMs, idempotencyKey }: any) => toToolResult(await platformClient.request(path, {
+      method, query, body, timeoutMs, idempotencyKey,
+    })),
   );
 
   registerTool(
@@ -3078,13 +3279,13 @@ async function readOptionalLocalConfig(): Promise<Record<string, string>> {
   const credentialProfile = credentials.profiles?.[profile] || {};
   const envFile = await readDotEnvLocal();
   const baseUrl = process.env.OPG_BASE_URL || envFile.OPG_BASE_URL || local.baseUrl || credentialProfile.baseUrl || '';
-  const app = process.env.OPG_APP_SLUG || envFile.OPG_APP_SLUG || local.app || credentialProfile.app || '';
+  const app = process.env.OPG_APP_SLUG || local.app || envFile.OPG_APP_SLUG || credentialProfile.app || '';
   const appCredential = app ? credentialProfile.apps?.[app] : undefined;
   const legacyApiKey = credentialProfile.app === app ? credentialProfile.apiKey : undefined;
   return {
     baseUrl,
     app,
-    apiKey: process.env.OPG_API_KEY || envFile.OPG_API_KEY || appCredential?.apiKey || legacyApiKey || local.apiKey || '',
+    apiKey: process.env.OPG_API_KEY || (envFile.OPG_API_KEY === 'rbx_replace_me' ? '' : envFile.OPG_API_KEY) || appCredential?.apiKey || legacyApiKey || local.apiKey || '',
     platformToken: process.env.OPG_PLATFORM_TOKEN || envFile.OPG_PLATFORM_TOKEN || credentialProfile.platformToken || local.platformToken || '',
     platformRefreshToken: credentialProfile.platformRefreshToken || local.platformRefreshToken || '',
     profile,
@@ -3218,6 +3419,16 @@ function parseQueryPayload(flags: Record<string, string>): Record<string, string
     'jobId',
     'mapping-id',
     'mappingId',
+    'admin-id',
+    'adminId',
+    'task-id',
+    'taskId',
+    'slot-key',
+    'slotKey',
+    'delete',
+    'timeout',
+    'idempotency-key',
+    'idempotencyKey',
     'rule-id',
     'ruleId',
     'form-action-id',
@@ -3881,6 +4092,23 @@ Usage:
   opg platform apps get --app-id <id>
   opg platform apps create --json '{"kind":"WEBSITE","name":"Demo","slug":"demo"}'
   opg platform apps update --app-id <id> --json '{...}'
+  opg platform observability requests --app-id <id> --status-min 500 --days 7
+  opg platform observability audits --app-id <id> --request-id <id>
+  opg platform ai health
+  opg platform ai requests --app-id <id> --days 7
+  opg platform ai sources list
+  opg platform ai sources create --json '{...}'
+  opg platform ai models update --id <id> --json '{...}'
+  opg platform app-ai defaults --app-id <id>
+  opg platform app-ai defaults --app-id <id> --capability chat --json '{...}'
+  opg platform site get --app-id <id>
+  opg platform site update --app-id <id> --json '{...}'
+  opg platform email-settings update --app-id <id> --json '{...}'
+  opg platform admins list --app-id <id>
+  opg platform admins permissions --app-id <id> --admin-id <id> --json '{...}'
+  opg platform settings storage list
+  opg platform settings login-google create --json '{...}'
+  opg platform jobs list --app-id <id>
   opg platform feedbacks list --app-id <id>
   opg platform feedbacks get --app-id <id> --feedback-id <id>
   opg platform feedbacks update --app-id <id> --feedback-id <id> --json '{...}'
@@ -3943,6 +4171,9 @@ Options:
   --base-url <url>       OPG gateway base URL.
   --platform-token <jwt> Platform admin token. Usually loaded from opg login.
   --app-id <id>          Target tenant app id for app data operations.
+  --id <id>              AI source/model or global setting id.
+  --admin-id <id>        Tenant app admin id.
+  --task-id <id>         Background task id.
   --form-id <id>         Form id or key for form commands.
   --question-id <id>     Question id for form question commands.
   --rule-id <id>         Logic rule id for form commands.

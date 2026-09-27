@@ -1393,10 +1393,10 @@ export async function readOpgLocalConfig(options: OpgLocalConfigOptions = {}): P
   const profile = String(options.profile || local.profile || credentials.currentProfile || 'default').trim() || 'default';
   const credentialProfile = credentials.profiles?.[profile] || {};
   const baseUrl = process.env.OPG_BASE_URL || envFile.OPG_BASE_URL || local.baseUrl || credentialProfile.baseUrl || '';
-  const app = process.env.OPG_APP_SLUG || envFile.OPG_APP_SLUG || local.app || credentialProfile.app || '';
+  const app = process.env.OPG_APP_SLUG || local.app || envFile.OPG_APP_SLUG || credentialProfile.app || '';
   const appCredential = app ? credentialProfile.apps?.[app] : undefined;
   const legacyApiKey = credentialProfile.app === app ? credentialProfile.apiKey : undefined;
-  const apiKey = process.env.OPG_API_KEY || envFile.OPG_API_KEY || appCredential?.apiKey || legacyApiKey || local.apiKey || '';
+  const apiKey = process.env.OPG_API_KEY || (envFile.OPG_API_KEY === 'rbx_replace_me' ? '' : envFile.OPG_API_KEY) || appCredential?.apiKey || legacyApiKey || local.apiKey || '';
   const platformToken = process.env.OPG_PLATFORM_TOKEN || envFile.OPG_PLATFORM_TOKEN || credentialProfile.platformToken || local.platformToken || '';
 
   if (!baseUrl) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { authService } from '@/lib/auth-service';
 import { runtimeContext } from '@/lib/runtime-context';
@@ -26,10 +26,9 @@ type SdkAuthApp = {
 export default function SdkLogin() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const baseUrl = useMemo(
-    () => String(searchParams.get('baseUrl') || runtimeContext.apiBaseUrl || '').replace(/\/+$/, ''),
-    [searchParams],
-  );
+  // The authorization link is untrusted. Never send the stored admin token to
+  // an API origin supplied by its query string.
+  const baseUrl = String(runtimeContext.apiBaseUrl || window.location.origin).replace(/\/+$/, '');
   const app = String(searchParams.get('app') || '').trim();
   const isPlatformMode = String(searchParams.get('mode') || '').trim() === 'platform' || !app;
   const state = String(searchParams.get('state') || '').trim();
@@ -113,7 +112,7 @@ export default function SdkLogin() {
     let cancelled = false;
     async function loadApps() {
       const token = authService.getToken();
-      if (!session || fixedAppSession || !token || !baseUrl) {
+      if (!session || fixedAppSession || authTarget !== 'app' || !token || !baseUrl) {
         return;
       }
       setAppsLoading(true);

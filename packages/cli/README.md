@@ -53,6 +53,13 @@ opg app list
 opg app create --kind website --name "Demo App" --slug demo
 opg platform apps list
 opg platform apps create --json '{"kind":"WEBSITE","name":"Demo App","slug":"demo"}'
+opg platform observability requests --app-id <app-id> --status-min 500 --days 7
+opg platform ai health
+opg platform ai sources list
+opg platform app-ai defaults --app-id <app-id>
+opg platform site get --app-id <app-id>
+opg platform settings storage list
+opg platform jobs list --app-id <app-id>
 opg platform runtime get
 opg platform runtime update --json '{"api_base_url":"https://opg.example.com"}'
 opg platform runtime overview
@@ -96,7 +103,8 @@ opg platform sms summary --days 30
 opg platform voices list
 ```
 
-The MCP server also exposes platform tools for app creation, runtime settings,
+The MCP server also exposes platform tools for app creation, request and audit events,
+AI provider health, runtime settings,
 runtime registry/templates, storage providers, AI sources/models, app feedback,
 app notifications, app analytics, app AI usage, app payment orders, and a generic `opg_platform_request` escape hatch for other
 `/api/v1/platform-admin/*` endpoints.
@@ -105,7 +113,7 @@ App admin RBAC can be managed through `opg_platform_app_admins_list`,
 `opg_platform_app_admin_upsert`, and `opg_platform_app_admin_permissions_update`.
 Use `role_keys` for role templates and `permission_overrides` for extra
 granular permissions. The CLI command surface can also call the same endpoints
-with `opg platform request`.
+with `opg platform admins` or `opg platform request`.
 
 Common app-data MCP tools:
 

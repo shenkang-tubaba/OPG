@@ -30,6 +30,7 @@ opg login
 ```
 
 `opg login` 默认是全平台授权，不需要 app。成功后会把平台 token 存到 `.opg/credentials.json`，用于全局控制面命令。
+即使项目已选中 app，`opg login` 仍执行平台授权；只有显式传入 `--app` 才会申请 app Developer Grant。
 
 创建 app 后，再做 app 级 SDK 授权：
 
@@ -222,6 +223,39 @@ opg platform payments products --app-id <app-id>
 opg platform payments orders --app-id <app-id> --page 1
 ```
 
+排查请求错误、审计记录和后台任务：
+
+```bash
+opg platform observability runtime
+opg platform observability requests --app-id <app-id> --status-min 500 --days 7
+opg platform observability audits --app-id <app-id> --request-id <request-id>
+opg platform ai health
+opg platform ai requests --days 7
+opg platform jobs list --app-id <app-id>
+opg platform jobs get --app-id <app-id> --task-id <task-id>
+```
+
+配置 App 与平台服务：
+
+```bash
+opg platform apps update --app-id <app-id> --json '{"name":"Demo"}'
+opg platform site get --app-id <app-id>
+opg platform site update --app-id <app-id> --json '{...}'
+opg platform email-settings get --app-id <app-id>
+opg platform admins list --app-id <app-id>
+opg platform ai sources list
+opg platform ai sources create --json '{...}'
+opg platform ai models list
+opg platform app-ai defaults --app-id <app-id>
+opg platform app-ai defaults --app-id <app-id> --capability chat --json '{...}'
+opg platform settings storage list
+opg platform settings sms list
+opg platform settings payments list
+opg platform settings login-google list
+```
+
+`platform settings` 支持 `storage`、`sms`、`sms-signatures`、`sms-templates`、`payments`、`email`、`email-senders`、`email-cloudflare`、`login-wechat`、`login-google`、`login-github`、`login-apple`、`proxies`；各类均支持 `list/create/update/delete`，更新或删除传 `--id`。
+
 维护 app 的外部 Connector：
 
 ```bash
@@ -334,6 +368,9 @@ opg mcp
 - `opg_platform_app_sms_test_send`
 - `opg_platform_ai_voices_list`
 - `opg_platform_ai_voice_operation`
+- `opg_platform_request_events`
+- `opg_platform_audit_events`
+- `opg_platform_ai_provider_health`
 - `opg_schema_policy_upsert`
 - `opg_app_request`
 - `opg_form_manifest_get`
@@ -393,7 +430,7 @@ OPG_API_KEY=opg_dev_xxx
 OPG_PLATFORM_TOKEN=eyJ...
 ```
 
-命令行参数优先级最高，其次是环境变量、本地 `.env.local`、`.opg/opg.config.json` 和 `.opg/credentials.json`。
+命令行参数和进程环境变量优先级最高。当前 app 优先取 `.opg/opg.config.json`，然后才读取 `.env.local`；`opg app use` 因此可以切换当前 app。`.env.local` 中旧版初始化生成的 `OPG_API_KEY=rbx_replace_me` 会被忽略，实际凭证从 `.opg/credentials.json` 读取。
 
 ## 发版前验收
 

@@ -130,7 +130,7 @@ Execution:
 执行类工具可能消耗模型 token、积分或 provider 额度，工具描述必须明确写出成本风险。
 数据库执行类工具可能改变 schema 或数据，工具描述必须明确 dry-run 默认值和 apply confirm。
 后端部署后，最小验收命令是 `opg db smoke`；它必须能返回数据库 manifest、当前命名空间表列表和一次已回滚的 dry-run DDL 结果。
-本地开发主链路是 `opg init --base-url <url> --app <slug>` 后执行 `opg login`。CLI 会创建短期 SDK 登录会话、打开浏览器授权页、通过 localhost callback 收到一次性 code，再换取平台级 Developer Grant 并保存到 `.opg/credentials.json`。Grant 由平台后台“开发者授权”统一管理，可以按 app 和 scope 精细调整，不要求用户手动复制 API key。
+本地开发主链路是 `opg init --base-url <url>`、`opg login`、`opg app create ...`、`opg login --app <slug>`。CLI 会创建短期登录会话、打开浏览器授权页，并通过 localhost callback 收到一次性 code。平台授权换取平台 JWT，app 授权换取按 app 和 scope 限制的 Developer Grant；两者分别保存在 `.opg/credentials.json`。授权页只向部署时配置的可信 API 地址发送管理员 token，不使用授权链接传入的 API 地址。
 仓库级 CI 验收命令仍然是 `npm run sdk:db:smoke`，读取 `OPG_BASE_URL`、`OPG_APP_SLUG`、`OPG_API_KEY`，用于部署后从源码仓库验证同一条 SDK 链路。`OPG_API_KEY` 推荐使用 `opg_dev_` Developer Grant。
 
 ## 7. UI
