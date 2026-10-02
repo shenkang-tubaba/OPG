@@ -1,3 +1,4 @@
+import OpgDialog from '@/components/OpgDialog';
 import { useEffect, useMemo, useState } from 'react';
 import {
   PlatformAppItem,
@@ -351,7 +352,7 @@ export default function PlatformEmailServicePage() {
         </div>
       </div>
 
-      {message && <div className={`alert alert-${message.type}`}>{message.text}</div>}
+      {message && !modalMode && <div className={`alert alert-${message.type}`}>{message.text}</div>}
 
       <section className="email-service-summary">
         <div><span>供应商</span><strong>{providers.length}</strong></div>
@@ -449,7 +450,8 @@ export default function PlatformEmailServicePage() {
       </section>
 
       {modalMode === 'provider' && (
-        <div className="modal-overlay" onMouseDown={() => setModalMode('')}>
+        <OpgDialog title="邮件账号" notice={message} value={providerForm} busy={saving} onClose={() => setModalMode('')}>{requestClose => (<>
+
           <form className="modal modal-lg email-service-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={saveProvider}>
             <div className="platform-section-head">
               <h3>{providerForm.id ? '编辑邮件供应商' : '新建邮件供应商'}</h3>
@@ -519,15 +521,17 @@ export default function PlatformEmailServicePage() {
             <label>状态<select value={providerForm.status} onChange={(event) => setProviderForm({ ...providerForm, status: event.target.value as 'ACTIVE' | 'INACTIVE' })}><option value="ACTIVE">ACTIVE</option><option value="INACTIVE">INACTIVE</option></select></label>
             <label>备注<textarea rows={3} value={providerForm.notes} onChange={(event) => setProviderForm({ ...providerForm, notes: event.target.value })} /></label>
             <div className="modal-actions">
-              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setModalMode('')}>取消</button>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose}>取消</button>
               <button className="btn btn-sm" type="submit" disabled={saving}>{saving ? '保存中...' : '保存'}</button>
             </div>
           </form>
-        </div>
+
+</>)}</OpgDialog>
       )}
 
       {modalMode === 'sender' && (
-        <div className="modal-overlay" onMouseDown={() => setModalMode('')}>
+        <OpgDialog title="发件邮箱" notice={message} value={senderForm} busy={saving} onClose={() => setModalMode('')}>{requestClose => (<>
+
           <form className="modal modal-lg email-service-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={saveSender}>
             <div className="platform-section-head">
               <h3>{senderForm.id ? '编辑发件邮箱' : '新建发件邮箱'}</h3>
@@ -552,25 +556,28 @@ export default function PlatformEmailServicePage() {
             <label>状态<select value={senderForm.status} onChange={(event) => setSenderForm({ ...senderForm, status: event.target.value as 'ACTIVE' | 'INACTIVE' })}><option value="ACTIVE">ACTIVE</option><option value="INACTIVE">INACTIVE</option></select></label>
             <label className="inline-check"><input type="checkbox" checked={senderForm.is_default} onChange={(event) => setSenderForm({ ...senderForm, is_default: event.target.checked })} />默认发件邮箱</label>
             <div className="modal-actions">
-              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setModalMode('')}>取消</button>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose}>取消</button>
               <button className="btn btn-sm" type="submit" disabled={saving || !providers.length}>{saving ? '保存中...' : '保存'}</button>
             </div>
           </form>
-        </div>
+
+</>)}</OpgDialog>
       )}
 
       {modalMode === 'sender-test' && (
-        <div className="modal-overlay" onMouseDown={() => setModalMode('')}>
+        <OpgDialog title="测试发件邮箱" notice={message} value={testForm} busy={saving} onClose={() => setModalMode('')}>{requestClose => (<>
+
           <form className="modal email-service-modal" onMouseDown={(event) => event.stopPropagation()} onSubmit={testSender}>
             <div className="platform-section-head"><h3>测试发件邮箱</h3></div>
             <label>发件邮箱<input value={testForm.from} disabled /></label>
             <label>收件邮箱<input type="email" value={testForm.to} onChange={(event) => setTestForm({ ...testForm, to: event.target.value })} required /></label>
             <div className="modal-actions">
-              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setModalMode('')}>取消</button>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose}>取消</button>
               <button className="btn btn-sm" type="submit" disabled={saving}>{saving ? '发送中...' : '发送测试'}</button>
             </div>
           </form>
-        </div>
+
+</>)}</OpgDialog>
       )}
     </div>
   );

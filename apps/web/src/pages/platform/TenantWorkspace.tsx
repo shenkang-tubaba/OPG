@@ -6275,7 +6275,13 @@ const agents = await opg.agents.list();`}</pre>
             </div>
 
             <nav className="tenant-workspace-nav">
-              {visibleWorkspaceNav.map((item) => (
+              {[
+                { label: '应用', keys: ['overview', 'analytics', 'admins'] },
+                { label: '开发与 AI', keys: ['build-data', 'api-docs', 'developers', 'ai-routing', 'ai-usage', 'logs'] },
+                { label: '运营', keys: ['email', 'notifications', 'feedback', 'forms', 'redeem', 'site', 'acquisition'] },
+              ].map(group => <div className="opg-tenant-nav-group" key={group.label}>
+                {visibleWorkspaceNav.some(item => group.keys.includes(item.key)) && <h3>{group.label}</h3>}
+                {visibleWorkspaceNav.filter(item => group.keys.includes(item.key)).map((item) => (
                 <button
                   key={item.key}
                   type="button"
@@ -6285,7 +6291,8 @@ const agents = await opg.agents.list();`}</pre>
                   <strong>{item.label}</strong>
                   <span>{item.desc}</span>
                 </button>
-              ))}
+                ))}
+              </div>)}
             </nav>
           </div>
 

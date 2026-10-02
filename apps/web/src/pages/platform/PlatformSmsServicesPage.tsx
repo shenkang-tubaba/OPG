@@ -1,3 +1,4 @@
+import OpgDialog from '@/components/OpgDialog';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   PlatformSmsEventItem,
@@ -822,7 +823,7 @@ export default function PlatformSmsServicesPage() {
         </div>
       </div>
 
-      {message && <div className={`alert alert-${message.type}`}>{message.text}</div>}
+      {message && !editorOpen && <div className={`alert alert-${message.type}`}>{message.text}</div>}
 
       <section className="sms-workspace-tabs">
         {smsTabs.map((item) => (
@@ -984,11 +985,12 @@ export default function PlatformSmsServicesPage() {
         </section>
 
         {editorOpen === 'providers' && (
-        <div className="modal-overlay" onClick={providerSaving ? undefined : resetProviderForm}>
+        <OpgDialog title="短信服务" notice={message} value={providerForm} busy={providerSaving} onClose={resetProviderForm}>{requestClose => (<>
+
         <section className="modal modal-lg sms-editor-modal" onClick={(event) => event.stopPropagation()}>
           <div className="platform-section-head">
             <h3>{providerEditing ? '编辑短信服务' : '创建短信服务'}</h3>
-            <button className="btn btn-secondary btn-sm" type="button" onClick={resetProviderForm} disabled={providerSaving}>
+            <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose} disabled={providerSaving}>
               关闭
             </button>
           </div>
@@ -1240,24 +1242,26 @@ export default function PlatformSmsServicesPage() {
               <button className="btn" type="submit" disabled={providerSaving}>
                 {providerSaving ? '保存中...' : providerEditing ? '保存更新' : '创建短信服务'}
               </button>
-              <button className="btn btn-secondary" type="button" onClick={resetProviderForm} disabled={providerSaving}>
+              <button className="btn btn-secondary" type="button" onClick={requestClose} disabled={providerSaving}>
                 取消
               </button>
             </div>
           </form>
         </section>
-        </div>
+
+</>)}</OpgDialog>
         )}
 
       </div>
       )}
 
       {editorOpen === 'signatures' && (
-        <div className="modal-overlay" onClick={signatureSaving ? undefined : resetSignatureForm}>
+        <OpgDialog title="短信签名" notice={message} value={signatureForm} busy={signatureSaving} onClose={resetSignatureForm}>{requestClose => (<>
+
           <section className="modal modal-lg sms-editor-modal" onClick={(event) => event.stopPropagation()}>
             <div className="platform-section-head">
               <h3>{signatureEditing ? '编辑短信签名' : '创建短信签名'}</h3>
-              <button className="btn btn-secondary btn-sm" type="button" onClick={resetSignatureForm} disabled={signatureSaving}>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose} disabled={signatureSaving}>
                 关闭
               </button>
             </div>
@@ -1324,21 +1328,23 @@ export default function PlatformSmsServicesPage() {
                 <button className="btn" type="submit" disabled={signatureSaving || !providers.length}>
                   {signatureSaving ? '保存中...' : signatureEditing ? '保存更新' : '创建短信签名'}
                 </button>
-                <button className="btn btn-secondary" type="button" onClick={resetSignatureForm} disabled={signatureSaving}>
+                <button className="btn btn-secondary" type="button" onClick={requestClose} disabled={signatureSaving}>
                   取消
                 </button>
               </div>
             </form>
           </section>
-        </div>
+
+</>)}</OpgDialog>
       )}
 
       {editorOpen === 'templates' && (
-        <div className="modal-overlay" onClick={templateSaving ? undefined : resetTemplateForm}>
+        <OpgDialog title="短信模板" notice={message} value={templateForm} busy={templateSaving} onClose={resetTemplateForm}>{requestClose => (<>
+
           <section className="modal modal-lg sms-editor-modal" onClick={(event) => event.stopPropagation()}>
             <div className="platform-section-head">
               <h3>{templateEditing ? '编辑短信模板' : '登记短信模板'}</h3>
-              <button className="btn btn-secondary btn-sm" type="button" onClick={resetTemplateForm} disabled={templateSaving}>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose} disabled={templateSaving}>
                 关闭
               </button>
             </div>
@@ -1436,13 +1442,14 @@ export default function PlatformSmsServicesPage() {
                 <button className="btn" type="submit" disabled={templateSaving || !providers.length}>
                   {templateSaving ? '保存中...' : templateEditing ? '保存更新' : '创建短信模板'}
                 </button>
-                <button className="btn btn-secondary" type="button" onClick={resetTemplateForm} disabled={templateSaving}>
+                <button className="btn btn-secondary" type="button" onClick={requestClose} disabled={templateSaving}>
                   取消
                 </button>
               </div>
             </form>
           </section>
-        </div>
+
+</>)}</OpgDialog>
       )}
 
       {activeTab === 'signatures' && (
@@ -1511,86 +1518,7 @@ export default function PlatformSmsServicesPage() {
           </div>
         </section>
 
-        {editorOpen === 'signatures' && (
-        <div className="modal-overlay" onClick={signatureSaving ? undefined : resetSignatureForm}>
-        <section className="modal modal-lg sms-editor-modal" onClick={(event) => event.stopPropagation()}>
-          <div className="platform-section-head">
-            <h3>{signatureEditing ? '编辑短信签名' : '创建短信签名'}</h3>
-            <button className="btn btn-secondary btn-sm" type="button" onClick={resetSignatureForm} disabled={signatureSaving}>
-              关闭
-            </button>
-          </div>
 
-          <form onSubmit={saveSignature} className="platform-form-grid">
-            <div className="form-group platform-form-span-2">
-              <label>所属短信服务</label>
-              <select
-                value={signatureForm.provider_id || selectedProviderId}
-                onChange={(e) => setSignatureForm((prev) => ({ ...prev, provider_id: e.target.value }))}
-                required
-              >
-                <option value="">请选择</option>
-                {providers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} ({item.provider_type})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group platform-form-span-2">
-              <label>签名名称</label>
-              <input
-                value={signatureForm.sign_name}
-                onChange={(e) => setSignatureForm((prev) => ({ ...prev, sign_name: e.target.value }))}
-                placeholder="例如：Demo App"
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={signatureForm.is_active}
-                  onChange={(e) => setSignatureForm((prev) => ({ ...prev, is_active: e.target.checked }))}
-                />
-                启用签名
-              </label>
-            </div>
-
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={signatureForm.is_default}
-                  onChange={(e) => setSignatureForm((prev) => ({ ...prev, is_default: e.target.checked }))}
-                />
-                设为默认
-              </label>
-            </div>
-
-            <div className="form-group platform-form-span-2">
-              <label>备注</label>
-              <input
-                value={signatureForm.notes}
-                onChange={(e) => setSignatureForm((prev) => ({ ...prev, notes: e.target.value }))}
-                placeholder="可选"
-              />
-            </div>
-
-            <div className="platform-form-actions platform-form-span-2">
-              <button className="btn" type="submit" disabled={signatureSaving || !providers.length}>
-                {signatureSaving ? '保存中...' : signatureEditing ? '保存更新' : '创建短信签名'}
-              </button>
-              <button className="btn btn-secondary" type="button" onClick={resetSignatureForm} disabled={signatureSaving}>
-                取消
-              </button>
-            </div>
-          </form>
-        </section>
-        </div>
-        )}
 
       </div>
       )}
@@ -1665,115 +1593,7 @@ export default function PlatformSmsServicesPage() {
           </div>
         </section>
 
-        {editorOpen === 'templates' && (
-        <div className="modal-overlay" onClick={templateSaving ? undefined : resetTemplateForm}>
-        <section className="modal modal-lg sms-editor-modal" onClick={(event) => event.stopPropagation()}>
-          <div className="platform-section-head">
-            <h3>{templateEditing ? '编辑短信模板' : '登记短信模板'}</h3>
-            <button className="btn btn-secondary btn-sm" type="button" onClick={resetTemplateForm} disabled={templateSaving}>
-              关闭
-            </button>
-          </div>
 
-          <form onSubmit={saveTemplate} className="platform-form-grid">
-            <div className="form-group platform-form-span-2">
-              <label>所属短信服务</label>
-              <select
-                value={templateForm.provider_id || selectedProviderId}
-                onChange={(e) => setTemplateForm((prev) => ({ ...prev, provider_id: e.target.value }))}
-                required
-              >
-                <option value="">请选择</option>
-                {providers.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} ({item.provider_type})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label>模板编码</label>
-              <input
-                value={templateForm.template_code}
-                onChange={(e) => setTemplateForm((prev) => ({ ...prev, template_code: e.target.value }))}
-                placeholder="例如：SMS_123456789"
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label>模板名称（可选）</label>
-              <input
-                value={templateForm.template_name}
-                onChange={(e) => setTemplateForm((prev) => ({ ...prev, template_name: e.target.value }))}
-                placeholder="例如：登录验证码"
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={templateForm.is_active}
-                  onChange={(e) => setTemplateForm((prev) => ({ ...prev, is_active: e.target.checked }))}
-                />
-                启用模板
-              </label>
-            </div>
-
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={templateForm.is_default}
-                  onChange={(e) => setTemplateForm((prev) => ({ ...prev, is_default: e.target.checked }))}
-                />
-                设为默认
-              </label>
-            </div>
-
-            <div className="form-group platform-form-span-2">
-              <label>备注</label>
-              <input
-                value={templateForm.notes}
-                onChange={(e) => setTemplateForm((prev) => ({ ...prev, notes: e.target.value }))}
-                placeholder="可选"
-              />
-            </div>
-
-            <div className="form-group platform-form-span-2">
-              <label>短信内容（可选）</label>
-              <textarea
-                rows={3}
-                value={templateForm.message_template}
-                onChange={(e) => setTemplateForm((prev) => ({ ...prev, message_template: e.target.value }))}
-                placeholder="Your verification code is {{code}}."
-              />
-            </div>
-
-            <div className="form-group platform-form-span-2">
-              <label>模板变量示例（JSON）</label>
-              <textarea
-                rows={6}
-                value={templateForm.variables_example_json}
-                onChange={(e) => setTemplateForm((prev) => ({ ...prev, variables_example_json: e.target.value }))}
-                placeholder='{\n  "code": "123456"\n}'
-              />
-            </div>
-
-            <div className="platform-form-actions platform-form-span-2">
-              <button className="btn" type="submit" disabled={templateSaving || !providers.length}>
-                {templateSaving ? '保存中...' : templateEditing ? '保存更新' : '创建短信模板'}
-              </button>
-              <button className="btn btn-secondary" type="button" onClick={resetTemplateForm} disabled={templateSaving}>
-                取消
-              </button>
-            </div>
-          </form>
-        </section>
-        </div>
-        )}
 
       </div>
       )}

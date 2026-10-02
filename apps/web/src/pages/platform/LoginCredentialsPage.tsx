@@ -1,3 +1,4 @@
+import OpgDialog from '@/components/OpgDialog';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -424,7 +425,7 @@ export default function LoginCredentialsPage() {
         </div>
       </div>
 
-      {message && <div className={`alert alert-${message.type}`}>{message.text}</div>}
+      {message && !formVisible && <div className={`alert alert-${message.type}`}>{message.text}</div>}
 
       <section className="credential-provider-strip">
         {providerStats.map((provider) => (
@@ -441,7 +442,8 @@ export default function LoginCredentialsPage() {
       </section>
 
       {formVisible && (
-        <div className="modal-overlay" onClick={saving ? undefined : closeForm}>
+        <OpgDialog title="登录凭证" notice={message} value={form} busy={saving} onClose={closeForm}>{requestClose => (<>
+
           <section className="modal modal-lg credential-form-modal" onClick={(event) => event.stopPropagation()}>
             <div className="platform-section-head">
             <h3>{form.id ? `编辑${providerByKey[form.provider].label}凭证` : providerByKey[form.provider].createLabel}</h3>
@@ -456,7 +458,7 @@ export default function LoginCredentialsPage() {
                   {providerByKey[form.provider].externalCreateLabel}
                 </a>
               ) : null}
-              <button className="btn btn-secondary btn-sm" type="button" onClick={closeForm} disabled={saving}>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose} disabled={saving}>
                 关闭
               </button>
             </div>
@@ -559,13 +561,14 @@ export default function LoginCredentialsPage() {
                 <button className="btn" type="submit" disabled={saving}>
                   {saving ? '保存中...' : form.id ? '保存更新' : '创建凭证'}
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={closeForm} disabled={saving}>
+                <button type="button" className="btn btn-secondary" onClick={requestClose} disabled={saving}>
                   取消
                 </button>
               </div>
             </form>
           </section>
-        </div>
+
+</>)}</OpgDialog>
       )}
 
       <section className="credential-list">

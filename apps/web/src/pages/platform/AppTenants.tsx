@@ -1,3 +1,4 @@
+import OpgDialog from '@/components/OpgDialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -280,20 +281,20 @@ export default function AppTenants() {
     <div className="platform-page">
       <div className="platform-page-head">
         <div>
-          <h1>租户应用画廊</h1>
-          <p>每个应用都作为独立工作区管理，点击卡片进入该应用主页。</p>
+          <h1>租户应用</h1>
+          <p>管理应用状态、配置与独立工作区。</p>
         </div>
         <div className="btn-group">
           <button className="btn btn-secondary btn-sm" onClick={fetchApps} disabled={loading}>
             {loading ? '刷新中...' : '刷新列表'}
           </button>
-          <button className="btn btn-secondary btn-sm" onClick={openCreate}>
+          <button className="btn btn-sm" onClick={openCreate}>
             新建应用
           </button>
         </div>
       </div>
 
-      {message && <div className={`alert alert-${message.type}`}>{message.text}</div>}
+      {message && !formVisible && <div className={`alert alert-${message.type}`}>{message.text}</div>}
 
       <div className="platform-stats-grid compact">
         <div className="platform-stat-card"><span>租户总数</span><strong>{stats.total}</strong></div>
@@ -308,7 +309,7 @@ export default function AppTenants() {
             className="platform-filter-input"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索应用名称或 slug"
+            aria-label="搜索应用" placeholder="搜索应用名称或 slug"
           />
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')}>
             <option value="ALL">全部状态</option>
@@ -355,7 +356,8 @@ export default function AppTenants() {
       </section>
 
       {formVisible && (
-        <div className="modal-overlay" onClick={saving ? undefined : closeForm}>
+        <OpgDialog title="应用配置" notice={message} value={form} busy={saving} onClose={closeForm}>{requestClose => (<>
+
           <section className="modal modal-lg" onClick={(event) => event.stopPropagation()}>
             <div className="platform-section-head">
               <h3>{currentAction}</h3>
@@ -490,13 +492,14 @@ export default function AppTenants() {
                 <button className="btn" type="submit" disabled={saving}>
                   {saving ? '保存中...' : currentAction}
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={closeForm}>
+                <button type="button" className="btn btn-secondary" onClick={requestClose}>
                   取消
                 </button>
               </div>
             </form>
           </section>
-        </div>
+
+</>)}</OpgDialog>
       )}
     </div>
   );
