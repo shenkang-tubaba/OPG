@@ -1,38 +1,18 @@
-# OS
-.DS_Store
-Thumbs.db
-
-# Env and secrets
-.env
-.env.*
-!.env.example
-.opg/
-
-# Dependencies
+# 依赖
 node_modules/
 
-# Build output
+# 构建产物
 dist/
 build/
-.next/
-coverage/
 
-# Logs
+# 日志与临时文件
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# Runtime data
-*.sqlite
-*.sqlite3
-*.db
-uploads/
-tmp/
-temp/
+.DS_Store
+Thumbs.db
 
 # IDE
 .idea/
 .vscode/
-*.swp
+
+# 敏感配置（确认无敏感信息后可自行移除该行）
+# .env
