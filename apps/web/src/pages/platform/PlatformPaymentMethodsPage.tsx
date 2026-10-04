@@ -1,3 +1,4 @@
+import OpgDialog from '@/components/OpgDialog';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   PlatformAppItem,
@@ -522,7 +523,7 @@ export default function PlatformPaymentMethodsPage() {
         </div>
       </div>
 
-      {message && <div className={`alert alert-${message.type}`}>{message.text}</div>}
+      {message && !editorOpen && <div className={`alert alert-${message.type}`}>{message.text}</div>}
 
       <section className="payment-provider-strip">
         <button
@@ -590,7 +591,8 @@ export default function PlatformPaymentMethodsPage() {
       </div>
 
       {editorOpen && (
-        <div className="modal-overlay" onClick={saving ? undefined : closeEditor}>
+        <OpgDialog title="支付方式" notice={message} value={form} busy={saving} onClose={closeEditor}>{requestClose => (<>
+
           <section className="modal modal-lg payment-edit-modal" onClick={(event) => event.stopPropagation()}>
           <div className="platform-section-head">
             <h3>{form.id ? '编辑支付方式' : '新建支付方式'}</h3>
@@ -600,7 +602,7 @@ export default function PlatformPaymentMethodsPage() {
                   新建
                 </button>
               )}
-              <button className="btn btn-secondary btn-sm" type="button" onClick={closeEditor} disabled={saving}>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={requestClose} disabled={saving}>
                 关闭
               </button>
             </div>
@@ -657,13 +659,14 @@ export default function PlatformPaymentMethodsPage() {
               <button className="btn" type="submit" disabled={saving}>
                 {saving ? '保存中...' : form.id ? '保存更新' : '创建支付方式'}
               </button>
-              <button className="btn btn-secondary" type="button" onClick={closeEditor} disabled={saving}>
+              <button className="btn btn-secondary" type="button" onClick={requestClose} disabled={saving}>
                 取消
               </button>
             </div>
           </form>
           </section>
-        </div>
+
+</>)}</OpgDialog>
       )}
 
       {(testResult || flowResult) && (

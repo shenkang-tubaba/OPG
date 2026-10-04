@@ -32,6 +32,7 @@ import PlatformConnectorsPage from '@/pages/platform/PlatformConnectorsPage';
 import PlatformLayout from '@/components/PlatformLayout';
 import { applyRuntimeContext, runtimeContext } from '@/lib/runtime-context';
 import '@/styles/globals.css';
+import '@/styles/opg-saas.css';
 
 function FirstRunGate({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -127,7 +128,7 @@ function BusinessProtectedRoute() {
     return <Navigate to={runtimeContext.loginPath} replace />;
   }
 
-  return <TenantWorkspace appIdOverride={String(userInfo.app_id)} />;
+  return <PlatformLayout><TenantWorkspace appIdOverride={String(userInfo.app_id)} /></PlatformLayout>;
 }
 
 function App() {

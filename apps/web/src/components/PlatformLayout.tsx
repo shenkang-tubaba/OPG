@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { AppBrandMark, MenuIcon } from '@/components/AppBrand';
+import { AppBrandMark, MenuIcon, SidebarToggleIcon } from '@/components/AppBrand';
 import { authApi } from '@/lib/api';
 import { authService } from '@/lib/auth-service';
 import { useCurrentUser } from '@/lib/hooks/use-api';
@@ -170,59 +170,81 @@ function PlatformNavIcon({ icon }: { icon: PlatformNavIconKey }) {
   );
 }
 
+const navigationGroups = [
+  { label: '平台', keys: ['dashboard', 'apps'] },
+  { label: 'AI 与接口', keys: ['playground', 'sources', 'models', 'usage', 'connectors', 'apis', 'developer-authorizations'] },
+  { label: '服务', keys: ['login-credentials', 'payments', 'sms', 'email', 'storage'] },
+  { label: '运维', keys: ['runtime', 'jobs', 'observability', 'notifications', 'proxies'] },
+];
+const allNavigationItems = [...navItems,
+  { key: 'playground', icon: 'playground', label: 'Playground', desc: '调试 AI 模型', path: '/platform-admin/ai/playground' },
+  { key: 'sources', icon: 'sources', label: '供应商', desc: 'AI 来源与连通性', path: '/platform-admin/ai/sources' },
+  { key: 'models', icon: 'models', label: '模型', desc: '模型目录与路由', path: '/platform-admin/ai/models' },
+  { key: 'usage', icon: 'usage', label: '调用统计', desc: 'AI 用量与日志', path: '/platform-admin/ai/usage' },
+  { key: 'observability', icon: 'usage', label: '可观测性', desc: '请求与审计事件', path: '/platform-admin/observability' },
+] satisfies Array<{ key: string; icon: PlatformNavIconKey; label: string; desc: string; path: string }>;
+
 export default function PlatformLayout({ children }: PlatformLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: userInfo } = useCurrentUser();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [aiMenuExpanded, setAiMenuExpanded] = useState(location.pathname.startsWith('/platform-admin/ai'));
-  const isTenantWorkspace = /^\/platform-admin\/apps\/[^/]+(?:\/|$)/.test(location.pathname);
+  const [collapsed, setCollapsed] = useState(false);
+  const [query, setQuery] = useState('');
+  const isTenantWorkspace = !runtimeContext.isPlatformPortal || /^\/platform-admin\/apps\/[^/]+(?:\/|$)/.test(location.pathname);
+  const currentPage = allNavigationItems.find(item => location.pathname.startsWith(item.path))?.label || '管理台';
+  const visibleGroups = navigationGroups.map(group => ({ ...group, items: group.keys
+    .map(key => allNavigationItems.find(item => item.key === key)!)
+    .filter(item => `${item.label} ${item.desc}`.toLowerCase().includes(query.trim().toLowerCase()))
+  })).filter(group => group.items.length);
 
-  const aiSecondaryItems = [
-    {
-      key: 'ai-playground',
-      icon: 'playground',
-      label: 'Playground',
-      desc: '直接调试文本、图片、语音和视频模型',
-      path: '/platform-admin/ai/playground',
-    },
-    {
-      key: 'ai-sources',
-      icon: 'sources',
-      label: '供应商',
-      desc: '管理 AI 源与连通性测试',
-      path: '/platform-admin/ai/sources',
-    },
-    {
-      key: 'ai-models',
-      icon: 'models',
-      label: '模型',
-      desc: '模型目录、供应商切换与测试',
-      path: '/platform-admin/ai/models',
-    },
-    {
-      key: 'ai-usage',
-      icon: 'usage',
-      label: '调用统计',
-      desc: '调用量、成本与日志明细',
-      path: '/platform-admin/ai/usage',
-    },
-  ] satisfies Array<{
-    key: string;
-    icon: PlatformNavIconKey;
-    label: string;
-    desc: string;
-    path: string;
-  }>;
-
-  const isAiSection = location.pathname.startsWith('/platform-admin/ai');
-
+  useEffect(() => { setMobileOpen(false); }, [location.pathname, location.search]);
   useEffect(() => {
-    if (isAiSection) {
-      setAiMenuExpanded(true);
-    }
-  }, [isAiSection]);
-
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileOpen(false); };
+    const desktop = window.matchMedia('(min-width: 901px)');
+    const onResize = () => { if (desktop.matches) setMobileOpen(false); };
+    window.addEventListener('keydown', onKey);
+    desktop.addEventListener('change', onResize);
+    return () => { window.removeEventListener('keydown', onKey); desktop.removeEventListener('change', onResize); };
+  }, []);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const panel = document.getElementById('opg-platform-navigation');
+    const items = () => Array.from(panel?.querySelectorAll<HTMLElement>('button, input, a[href]') || []).filter(el => el.getClientRects().length > 0 && getComputedStyle(el).visibility === 'visible');
+    const focusInside = () => {
+      if (!panel?.contains(document.activeElement)) (items()[0] || panel)?.focus();
+    };
+    focusInside();
+    const focusFrame = requestAnimationFrame(focusInside);
+    const onFocus = (event: FocusEvent) => {
+      if (event.target instanceof Node && !panel?.contains(event.target)) focusInside();
+    };
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const targets = items();
+      const first = targets[0], last = targets[targets.length - 1];
+      const outside = !panel?.contains(document.activeElement);
+      if (!first) { event.preventDefault(); panel?.focus(); return; }
+      if (outside || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+      }
+    };
+    document.addEventListener('keydown', trap);
+    document.addEventListener('focusin', onFocus);
+    panel?.addEventListener('transitionend', focusInside);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', trap);
+      document.removeEventListener('focusin', onFocus);
+      panel?.removeEventListener('transitionend', focusInside);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [mobileOpen]);
   const handleLogout = () => {
     authApi.logout();
     authService.logout();
@@ -230,104 +252,43 @@ export default function PlatformLayout({ children }: PlatformLayoutProps) {
   };
 
   return (
-    <div className={`platform-shell ${isTenantWorkspace ? 'tenant-workspace-mode' : ''}`}>
-      {!isTenantWorkspace && (
-        <aside className={`platform-sidebar ${mobileOpen ? 'open' : ''}`}>
-          <div className="platform-brand">
-            <div className="platform-brand-logo">
-              <AppBrandMark size={40} variant="white" />
-            </div>
-            <div className="platform-brand-text">
-              <h2>OPG</h2>
-              <p>one person group</p>
-            </div>
+    <div className={`platform-shell opg-admin ${isTenantWorkspace ? 'tenant-workspace-mode' : ''} ${collapsed ? 'opg-nav-collapsed' : ''}`}>
+      {!isTenantWorkspace && <>
+        <aside tabIndex={-1} id="opg-platform-navigation" className={`platform-sidebar opg-sidebar ${mobileOpen ? 'open' : ''}`}>
+          <div className="opg-sidebar-brand">
+            <AppBrandMark size={30} />
+            <strong className="opg-brand-name">OPG</strong>
+            <button className="opg-icon-button opg-collapse-button" type="button" aria-label={collapsed ? '展开导航' : '收起导航'} aria-expanded={!collapsed} onClick={() => { setCollapsed(value => !value); setQuery(''); }}><SidebarToggleIcon collapsed={collapsed} /></button>
+            <button className="opg-icon-button opg-mobile-close" type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><SidebarToggleIcon /></button>
           </div>
-
-          <nav className="platform-nav">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.key}
-                to={item.path}
-                className={({ isActive }) => `platform-nav-item ${isActive ? 'active' : ''}`}
-                onClick={() => setMobileOpen(false)}
-              >
-                <PlatformNavIcon icon={item.icon} />
-                <div className="platform-nav-item-title">{item.label}</div>
-                <div className="platform-nav-item-desc">{item.desc}</div>
-              </NavLink>
-            ))}
-
-            <div className={`platform-nav-group ${aiMenuExpanded ? 'expanded' : ''}`}>
-              <button
-                type="button"
-                className={`platform-nav-group-trigger ${isAiSection ? 'active' : ''}`}
-                onClick={() => setAiMenuExpanded((prev) => !prev)}
-                aria-expanded={aiMenuExpanded}
-              >
-                <PlatformNavIcon icon="ai" />
-                <div>
-                  <div className="platform-nav-item-title">AI</div>
-                  <div className="platform-nav-item-desc">配置供应商、模型与调试入口</div>
-                </div>
-                <span className="platform-nav-group-caret">{aiMenuExpanded ? '−' : '+'}</span>
-              </button>
-
-              {aiMenuExpanded && (
-                <div className="platform-nav-children">
-                  {aiSecondaryItems.map((item) => (
-                    <NavLink
-                      key={item.key}
-                      to={item.path}
-                      className={({ isActive }) => `platform-nav-subitem ${isActive ? 'active' : ''}`}
-                      onClick={() => setMobileOpen(false)}
-                    >
-                      <PlatformNavIcon icon={item.icon} />
-                      <div>
-                        <div className="platform-nav-subitem-title">{item.label}</div>
-                        <div className="platform-nav-subitem-desc">{item.desc}</div>
-                      </div>
-                    </NavLink>
-                  ))}
-                </div>
-              )}
-            </div>
+          <label className="opg-nav-search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6" /><path d="m15 15 5 5" /></svg>
+            <input type="search" aria-label="查找菜单" placeholder="查找菜单" value={query} onChange={event => setQuery(event.target.value)} />
+          </label>
+          <nav className="opg-navigation" aria-label="平台导航">
+            {visibleGroups.map(group => <div className="opg-nav-section" key={group.label}>
+              <h3>{group.label}</h3>
+              {group.items.map(item => <NavLink key={item.key} to={item.path} title={item.label} className={({ isActive }) => `opg-nav-link ${isActive ? 'active' : ''}`} onClick={() => setMobileOpen(false)}>
+                <PlatformNavIcon icon={item.icon} /><span>{item.label}</span>
+              </NavLink>)}
+            </div>)}
+            {!visibleGroups.length && <p className="opg-nav-empty" role="status">没有匹配的菜单</p>}
           </nav>
+          <div className="opg-sidebar-footer"><span>one person group</span><small>v{__APP_VERSION__}</small></div>
         </aside>
-      )}
-
-      {!isTenantWorkspace && mobileOpen && <div className="platform-mask" onClick={() => setMobileOpen(false)} />}
-
+        {mobileOpen && <button className="platform-mask" type="button" aria-label="关闭导航菜单" onClick={() => setMobileOpen(false)} />}
+      </>}
       <div className={`platform-main ${isTenantWorkspace ? 'tenant-workspace-mode' : ''}`}>
         <header className="platform-header">
-          {!isTenantWorkspace && (
-            <button
-              aria-label="打开导航菜单"
-              className="platform-menu-btn"
-              onClick={() => setMobileOpen((prev) => !prev)}
-              title="打开导航菜单"
-              type="button"
-            >
-              <MenuIcon />
-            </button>
-          )}
-          <div className="platform-header-context">
-            {isTenantWorkspace ? (
-              <span>租户应用工作区</span>
-            ) : (
-              <span>平台管理台</span>
-            )}
+          <div className="opg-header-start">
+            {!isTenantWorkspace && <button aria-label="打开导航菜单" aria-controls="opg-platform-navigation" aria-expanded={mobileOpen} className="opg-icon-button opg-mobile-menu" type="button" onClick={() => setMobileOpen(value => !value)}><MenuIcon /></button>}
+            <div className="opg-breadcrumb"><span>OPG</span><span aria-hidden="true">/</span><strong>{isTenantWorkspace ? '应用工作区' : currentPage}</strong></div>
           </div>
           <div className="platform-header-user">
-            <div className="platform-header-user-info">
-              <strong>{userInfo?.display_name || userInfo?.email || '超级管理员'}</strong>
-              <span>{userInfo?.email || 'platform-admin'}</span>
-            </div>
-            <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
-              退出登录
-            </button>
+            <div className="platform-header-user-info"><strong>{userInfo?.display_name || userInfo?.email || '超级管理员'}</strong></div>
+            <button className="btn btn-secondary btn-sm" type="button" onClick={handleLogout}>退出登录</button>
           </div>
         </header>
-
         <main className="platform-content">{children}</main>
       </div>
     </div>
