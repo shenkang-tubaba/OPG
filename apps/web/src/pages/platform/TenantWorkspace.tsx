@@ -6282,6 +6282,7 @@ const agents = await opg.agents.list();`}</pre>
                 { label: '应用', keys: ['overview', 'analytics', 'admins'] },
                 { label: '开发与 AI', keys: ['build-data', 'api-docs', 'developers', 'ai-routing', 'ai-usage', 'logs'] },
                 { label: '运营', keys: ['email', 'notifications', 'feedback', 'forms', 'redeem', 'site', 'acquisition'] },
+                { label: '商城', keys: ['mall'] },
               ].map(group => <div className="opg-tenant-nav-group" key={group.label}>
                 {visibleWorkspaceNav.some(item => group.keys.includes(item.key)) && <h3>{group.label}</h3>}
                 {visibleWorkspaceNav.filter(item => group.keys.includes(item.key)).map((item) => (
