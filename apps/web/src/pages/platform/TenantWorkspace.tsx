@@ -862,6 +862,7 @@ export default function TenantWorkspace({ appIdOverride }: TenantWorkspaceProps)
       if (item.key === 'feedback') return canViewFeedback;
       if (item.key === 'forms') return canViewForms;
       if (item.key === 'redeem') return canUseRedeemRead;
+      if (item.key === 'mall') return canUseRedeemRead || isAppSuperAdmin;
       return false;
     });
   }, [adminAccess, isAppSuperAdmin, canManageAiRouting, canUseRedeemRead]);
