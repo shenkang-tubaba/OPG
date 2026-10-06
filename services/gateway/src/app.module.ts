@@ -33,6 +33,7 @@ import { AppConnectorsModule } from './modules/app-connectors/app-connectors.mod
 import { AppBuildObservabilityModule } from './modules/app-build-observability/app-build-observability.module';
 import { AppRuntimeModule } from './modules/app-runtime/app-runtime.module';
 import { AdminNotificationsModule } from './modules/admin-notifications/admin-notifications.module';
+import { MallResourcesModule } from './modules/mall-resources/mall-resources.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { HttpThrottlerGuard } from './common/guards/http-throttler.guard';
@@ -80,6 +81,7 @@ import { REQUEST_RATE_LIMIT_POLICY } from './common/security/request-rate-limit.
     AppBuildObservabilityModule,
     AppRuntimeModule,
     AdminNotificationsModule,
+    MallResourcesModule,
     BootstrapModule,
   ],
   providers: [

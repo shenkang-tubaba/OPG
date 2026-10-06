@@ -13,7 +13,7 @@ import { PRISMA_CLIENT } from '../../config/database.module';
 
 type TxClient = Prisma.TransactionClient;
 
-export type RedeemGrantScope = 'app_membership' | 'ai_membership';
+export type RedeemGrantScope = 'app_membership' | 'ai_membership' | 'vip_membership' | 'svip_membership';
 
 export interface RedeemGrantInput {
   scope: RedeemGrantScope;
@@ -1603,7 +1603,8 @@ export class RedeemService implements OnModuleInit {
     const { appId, userId, codeId, redemptionId, grant } = params;
     const now = new Date();
 
-    if (grant.scope === 'app_membership') {
+    // vip/svip 与 app_membership 同样写 users.membership_expires_at（兼容现有 VIP 判定）
+    if (grant.scope === 'app_membership' || grant.scope === 'vip_membership' || grant.scope === 'svip_membership') {
       if (!grant.days || grant.days <= 0) {
         throw new BadRequestException('app_membership 必须设置正数天数');
       }
@@ -1640,7 +1641,7 @@ export class RedeemService implements OnModuleInit {
       const entitlement = await this.upsertEntitlement(tx, {
         appId,
         userId,
-        scope: 'app_membership',
+        scope: grant.scope,
         resourceId: null,
         languageCode: null,
         extensionDays: grant.days,
@@ -1650,7 +1651,7 @@ export class RedeemService implements OnModuleInit {
       });
 
       return {
-        scope: 'app_membership',
+        scope: grant.scope,
         expires_at: entitlement.expires_at,
       };
     }
@@ -1913,7 +1914,7 @@ export class RedeemService implements OnModuleInit {
 
   private normalizeGrant(raw: RedeemGrantInput, index = 0): RedeemGrantNormalized {
     const scope = String(raw?.scope || '').trim() as RedeemGrantScope;
-    if (!scope || !['app_membership', 'ai_membership'].includes(scope)) {
+    if (!scope || !['app_membership', 'ai_membership', 'vip_membership', 'svip_membership'].includes(scope)) {
       throw new BadRequestException(`第 ${index + 1} 条权益 scope 无效`);
     }
 

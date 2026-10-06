@@ -2844,6 +2844,40 @@ export interface PlatformAppAiPointsGrantResult {
 
 export type PlatformRedeemGrantScope = 'app_membership' | 'ai_membership';
 
+// ===== 商城资源库 =====
+export interface MallResourceItem {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  content_html: string;
+  cover_url: string;
+  required_tier: 'VIP' | 'SVIP';
+  download_url: string | null;
+  download_pwd: string | null;
+  platform: string | null;
+  link_status: string;
+  link_checked_at: string | null;
+  link_fail_count: number;
+  sort_order: number;
+  published: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MallResourcePayload {
+  title: string;
+  category?: string;
+  summary?: string;
+  content_html?: string;
+  cover_url?: string;
+  required_tier?: 'VIP' | 'SVIP';
+  download_url?: string | null;
+  download_pwd?: string | null;
+  sort_order?: number;
+  published?: boolean;
+}
+
 export interface PlatformRedeemGrantInput {
   scope: PlatformRedeemGrantScope;
   days?: number;
@@ -5505,6 +5539,33 @@ export const platformApi = {
         granted: Array<Record<string, unknown>>;
       };
     });
+  },
+
+  // ===== 商城资源库（mall-resources） =====
+
+  listMallResources: async (appId: string): Promise<{ total: number; items: MallResourceItem[] }> => {
+    const response = await apiClient.getClient().get(`/platform-admin/apps/${appId}/mall-resources`);
+    return response.data?.data || response.data;
+  },
+
+  createMallResource: async (appId: string, payload: MallResourcePayload) => {
+    const response = await apiClient.getClient().post(`/platform-admin/apps/${appId}/mall-resources`, payload);
+    return response.data?.data || response.data;
+  },
+
+  updateMallResource: async (appId: string, id: string, payload: MallResourcePayload) => {
+    const response = await apiClient.getClient().put(`/platform-admin/apps/${appId}/mall-resources/${id}`, payload);
+    return response.data?.data || response.data;
+  },
+
+  deleteMallResource: async (appId: string, id: string) => {
+    const response = await apiClient.getClient().delete(`/platform-admin/apps/${appId}/mall-resources/${id}`);
+    return response.data?.data || response.data;
+  },
+
+  checkMallResourceLinks: async (appId: string) => {
+    const response = await apiClient.getClient().post(`/platform-admin/apps/${appId}/mall-resources/check-links`, {});
+    return response.data?.data || response.data;
   },
 
   getUploadUrl: async (

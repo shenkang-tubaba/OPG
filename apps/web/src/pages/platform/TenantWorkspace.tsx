@@ -53,6 +53,7 @@ import {
 import { pickApiData, pickApiErrorMessage } from '@/lib/api-response';
 import { runtimeContext } from '@/lib/runtime-context';
 import AppAiUsagePanel from '@/pages/platform/components/AppAiUsagePanel';
+import MallResourcesPage from '@/pages/platform/MallResourcesPage';
 import AppLogsPanel from '@/pages/platform/components/AppLogsPanel';
 import TenantBuildDataPanel from '@/pages/platform/components/TenantBuildDataPanel';
 import TenantApiDocsPanel from '@/pages/platform/components/TenantApiDocsPanel';
@@ -61,7 +62,7 @@ import AdminNotificationsPanel from '@/pages/platform/components/AdminNotificati
 import TenantFormsPanel from '@/pages/platform/components/TenantFormsPanel';
 
 type Message = { type: 'success' | 'error'; text: string } | null;
-type WorkspaceSection = 'overview' | 'build-data' | 'analytics' | 'ai-usage' | 'logs' | 'api-docs' | 'developers' | 'admins' | 'ai-routing' | 'site' | 'email' | 'notifications' | 'feedback' | 'forms' | 'acquisition' | 'redeem';
+type WorkspaceSection = 'overview' | 'build-data' | 'analytics' | 'ai-usage' | 'logs' | 'api-docs' | 'developers' | 'admins' | 'ai-routing' | 'site' | 'email' | 'notifications' | 'feedback' | 'forms' | 'acquisition' | 'redeem' | 'mall';
 type RedeemSubPage = 'products' | 'product-create' | 'orders' | 'code-batches' | 'code-create' | 'codes' | 'redemptions';
 type ManualGrantIdentityType = 'email' | 'user_id' | 'phone';
 type AppModelCapabilityFilter = 'ALL' | PlatformAppAiModelRouteItem['model']['capability'] | 'voice_clone';
@@ -156,6 +157,7 @@ const WORKSPACE_NAV: Array<{ key: WorkspaceSection; label: string; desc: string 
   { key: 'feedback', label: '用户反馈', desc: '反馈处理、积分奖励' },
   { key: 'forms', label: '表单', desc: '用户来源、NPS 与自定义表单' },
   { key: 'redeem', label: '产品与兑换', desc: '产品、兑换码与分发运营' },
+  { key: 'mall', label: '商城资源库', desc: '电子书/教材/指标，链接巡检' },
 ];
 
 const REDEEM_SUB_NAV: Array<{ key: RedeemSubPage; label: string }> = [
@@ -6324,6 +6326,7 @@ const agents = await opg.agents.list();`}</pre>
           {activeSection === 'forms' && <TenantFormsPanel appId={appId} canWrite={canManageForms} />}
           {activeSection === 'acquisition' && renderAcquisition()}
           {activeSection === 'redeem' && renderRedeem()}
+          {activeSection === 'mall' && <MallResourcesPage />}
         </section>
       </div>
     </div>

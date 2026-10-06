@@ -27,9 +27,10 @@ import { BuiltInTestAppSeedService } from './built-in-test-app-seed.service';
 import { DeveloperAuthorizationModule } from '../developer-sdk/developer-authorization.module';
 import { PlatformTasksModule } from '../platform-tasks/platform-tasks.module';
 import { AdminNotificationsModule } from '../admin-notifications/admin-notifications.module';
+import { MallResourcesModule } from '../mall-resources/mall-resources.module';
 
 @Module({
-  imports: [AiChatModule, RedeemModule, BehaviorAnalyticsModule, FeedbackModule, PaymentsModule, AuthModule, TenantSiteModule, EmailDeliveryModule, OutboundProxyModule, RuntimeSettingsModule, SmsModule, DeveloperAuthorizationModule, PlatformTasksModule, AdminNotificationsModule],
+  imports: [AiChatModule, RedeemModule, BehaviorAnalyticsModule, FeedbackModule, PaymentsModule, AuthModule, TenantSiteModule, EmailDeliveryModule, OutboundProxyModule, RuntimeSettingsModule, SmsModule, DeveloperAuthorizationModule, PlatformTasksModule, AdminNotificationsModule, MallResourcesModule],
   controllers: [PlatformAdminController, FeedbackAdminApiController, PlatformAiProductDecouplingController],
   providers: [
     PlatformAdminService,
