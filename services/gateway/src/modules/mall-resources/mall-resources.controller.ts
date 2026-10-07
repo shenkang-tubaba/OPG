@@ -27,11 +27,25 @@ export class MallResourcesController {
 
   @Get('resources')
   @Public()
-  @ApiOperation({ summary: '商城资源列表（游客可看介绍；VIP/SVIP 返回下载链接）' })
-  async list(@Req() req: AuthRequest, @Query('category') category?: string) {
+  @ApiOperation({ summary: '商城资源列表（游客可看介绍；支持 category/tag/keyword/sort=download_count|time|title）' })
+  async list(
+    @Req() req: AuthRequest,
+    @Query('category') category?: string,
+    @Query('tag') tag?: string,
+    @Query('keyword') keyword?: string,
+    @Query('sort') sort?: string,
+  ) {
     const appSlug = String(resolveAppSlug(req) || '');
     const userId = String(req.user?.id || req.user?.user_id || req.user?.sub || '');
-    return this.service.listForUser(appSlug, userId, category || undefined);
+    return this.service.listForUser(appSlug, userId, category || undefined, tag || undefined, keyword || undefined, sort || undefined);
+  }
+
+  @Post('resources/:id/track-download')
+  @Public()
+  @ApiOperation({ summary: '下载量上报（复制/打开网盘时调用，+1）' })
+  async trackDownload(@Req() req: AuthRequest, @Param('id') id: string) {
+    const appSlug = String(resolveAppSlug(req) || '');
+    return this.service.trackDownload(appSlug, id);
   }
 
   @Get('resources/:id')
