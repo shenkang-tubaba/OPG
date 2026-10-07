@@ -5594,21 +5594,15 @@ export const platformApi = {
 
   uploadImageBuffer: async (
     file: File,
-    appSlug?: string,
-    appId?: string,
-    keyPrefix: string = 'uploads/images',
+    _appSlug?: string,
+    _appId?: string,
+    _keyPrefix?: string,
   ) => {
+    // 注意：服务端 upload-request.policy 禁止客户端传 app_slug/app_id/key_prefix
+    // （"storage tenant and key prefix are determined by the authenticated route"），
+    // 租户与目录由鉴权路由决定；这里只传文件本身。
     const formData = new FormData();
     formData.append('file', file);
-    if (appSlug) {
-      formData.append('app_slug', appSlug);
-    }
-    if (appId) {
-      formData.append('app_id', appId);
-    }
-    if (keyPrefix) {
-      formData.append('key_prefix', keyPrefix);
-    }
     const response = await apiClient.getClient().post('/upload/image-buffer', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
