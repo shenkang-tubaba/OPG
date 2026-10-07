@@ -7,6 +7,14 @@ import {
 } from '@/lib/api';
 import { pickApiErrorMessage } from '@/lib/api-response';
 import { compressImage, formatBytes } from '@/lib/image-compress';
+import {
+  extractPanLinks,
+  extractImageUrls,
+  buildImageTag,
+  normalizeUrl,
+  insertAtCursor,
+  detectPanPlatform,
+} from '@/lib/paste-parse';
 
 const CATEGORIES = [
   { key: 'ebook', label: '电子书' },
@@ -65,6 +73,11 @@ export default function MallResourcesPage() {
   const [inlineUploading, setInlineUploading] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const inlineInputRef = useRef<HTMLInputElement>(null);
+  const contentAreaRef = useRef<HTMLTextAreaElement>(null);
+  const [imgDialogOpen, setImgDialogOpen] = useState(false);
+  const [imgDialogUrl, setImgDialogUrl] = useState('');
+  const [imgDialogMsg, setImgDialogMsg] = useState<string | null>(null);
+  const [panHint, setPanHint] = useState<{ label: string; pwd?: string | null } | null>(null);
 
   const load = useCallback(async () => {
     if (!appId) return;
@@ -166,6 +179,73 @@ export default function MallResourcesPage() {
 
   const catLabel = (key: string) => CATEGORIES.find((c) => c.key === key)?.label || key;
 
+  // 图床链接弹窗：粘贴 → 自动规范化 → 插入光标处
+  const openImgDialog = () => {
+    // 预读剪贴板，有图片链接直接填入
+    setImgDialogUrl('');
+    setImgDialogMsg(null);
+    setImgDialogOpen(true);
+    navigator.clipboard?.readText?.().then((txt) => {
+      const urls = extractImageUrls(txt);
+      if (urls.length) {
+        setImgDialogUrl(urls.join('\n'));
+        setImgDialogMsg(`已从剪贴板识别到 ${urls.length} 个图片链接`);
+      }
+    }).catch(() => {});
+  };
+
+  const confirmInsertImages = () => {
+    const raw = imgDialogUrl.trim();
+    if (!raw) {
+      setImgDialogMsg('请粘贴图片链接');
+      return;
+    }
+    const normalized = raw.split(/\s+/).map(normalizeUrl).filter(Boolean);
+    const urls = Array.from(new Set([...extractImageUrls(normalized.join('\n')), ...normalized.filter((u) => /^https?:\/\//i.test(u))]));
+    if (!urls.length) {
+      setImgDialogMsg('未识别到图片链接：请确认是 http(s) 开头的图片地址');
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      content_html: insertAtCursor(contentAreaRef.current, prev.content_html, urls.map(buildImageTag).join('\n')),
+    }));
+    setImgDialogMsg(null);
+    setImgDialogOpen(false);
+    setMessage({ type: 'success', text: `已插入 ${urls.length} 张图床图片（自动规范化）` });
+  };
+
+  // 网盘链接粘贴自动识别：平台 + 提取码
+  const handleDownloadUrlChange = (value: string) => {
+    setForm((prev) => ({ ...prev, download_url: value }));
+    const text = value;
+    const links = extractPanLinks(text);
+    if (links.length) {
+      const first = links[0];
+      setForm((prev) => ({
+        ...prev,
+        download_url: first.url,
+        download_pwd: first.pwd || prev.download_pwd,
+      }));
+      setPanHint({ label: first.platformLabel, pwd: first.pwd });
+      return;
+    }
+    // 单链接无平台命中：仍尝试从整段文本抠提取码
+    const hit = detectPanPlatform(normalizeUrl(text));
+    if (hit) {
+      setForm((prev) => ({ ...prev, download_url: normalizeUrl(text) }));
+      setPanHint({ label: hit.label });
+      return;
+    }
+    const pwdMatch = /(?:提取码|访问码|密码)\s*[:：=]?\s*([a-zA-Z0-9]{3,8})/i.exec(text);
+    if (pwdMatch && !links.length) {
+      setForm((prev) => ({ ...prev, download_pwd: prev.download_pwd || pwdMatch[1] }));
+      setPanHint({ label: '已识别提取码（平台未识别）', pwd: pwdMatch[1] });
+      return;
+    }
+    setPanHint(null);
+  };
+
   // 封面：canvas 压缩（长边 1600 / JPEG，自动降质到 ~500KB 内）后存服务器
   const uploadCover = async (file: File) => {
     setCoverUploading(true);
@@ -192,12 +272,10 @@ export default function MallResourcesPage() {
       const uploaded = await platformApi.uploadImageBuffer(compressed, 'xunlong', appId, 'mall/content');
       const url = uploaded.file_url || '';
       const imgTag = `<img src="${url}" style="max-width:100%;border-radius:8px" />`;
-      setForm((prev) => {
-        const el = document.getElementById('mall-content-html') as HTMLTextAreaElement | null;
-        const pos = el ? el.selectionStart : prev.content_html.length;
-        const next = prev.content_html.slice(0, pos) + '\n' + imgTag + '\n' + prev.content_html.slice(pos);
-        return { ...prev, content_html: next };
-      });
+      setForm((prev) => ({
+        ...prev,
+        content_html: insertAtCursor(contentAreaRef.current, prev.content_html, imgTag),
+      }));
       setMessage({ type: 'success', text: `插图已插入（${formatBytes(originalSize)} → ${formatBytes(compressedSize)}）` });
     } catch (error: any) {
       setMessage({ type: 'error', text: pickApiErrorMessage(error, '插图上传失败') });
@@ -328,7 +406,7 @@ export default function MallResourcesPage() {
               </button>
             </div>
 
-            <label style={labelStyle}>图文介绍（支持 HTML；插图走图床外链或上传，推荐外链节省服务器）</label>
+            <label style={labelStyle}>图文介绍（支持 HTML；推荐图床外链，或上传压缩图）</label>
             <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
               <input
                 ref={inlineInputRef}
@@ -343,28 +421,45 @@ export default function MallResourcesPage() {
                 disabled={inlineUploading}
                 style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#93c5fd', cursor: 'pointer', fontSize: 12 }}
               >
-                {inlineUploading ? '压缩上传中...' : '📷 插入图片（压缩后存服务器）'}
+                {inlineUploading ? '压缩上传中...' : '📷 上传插图'}
+              </button>
+              <button
+                type="button"
+                onClick={openImgDialog}
+                style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#6ee7b7', cursor: 'pointer', fontSize: 12 }}
+              >
+                🌐 插入图床图片
               </button>
               <span style={{ fontSize: 11, color: '#6b7280', alignSelf: 'center' }}>
-                插入位置 = 光标处；图床图片直接把 &lt;img src="外链"&gt; 写进下方编辑器即可
+                插入位置 = 光标处；链接自动规范化，不怕贴错格式
               </span>
             </div>
             <textarea
-              id="mall-content-html"
+              ref={contentAreaRef}
               style={{ ...inputStyle, minHeight: 120, fontFamily: 'monospace' }}
               value={form.content_html}
               onChange={(e) => setForm({ ...form, content_html: e.target.value })}
-              placeholder={'<p>课程目录、截图等 HTML 内容</p>\n<img src="https://图床地址/xxx.jpg" style="max-width:100%" />'}
+              placeholder={'<p>课程目录、截图等 HTML 内容</p>'}
             />
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
               <div>
-                <label style={labelStyle}>网盘下载链接</label>
-                <input style={inputStyle} value={form.download_url} onChange={(e) => setForm({ ...form, download_url: e.target.value })} placeholder="https://pan.baidu.com/s/xxxx" />
+                <label style={labelStyle}>网盘下载链接（粘贴分享文本自动识别平台/提取码）</label>
+                <input
+                  style={inputStyle}
+                  value={form.download_url}
+                  onChange={(e) => handleDownloadUrlChange(e.target.value)}
+                  placeholder="粘贴网盘链接或整段分享文本"
+                />
+                {panHint && (
+                  <div style={{ fontSize: 11, color: '#6ee7b7', marginTop: 4 }}>
+                    ✓ 已识别：{panHint.label}{panHint.pwd ? `，提取码 ${panHint.pwd}` : ''}
+                  </div>
+                )}
               </div>
               <div>
                 <label style={labelStyle}>提取码</label>
-                <input style={inputStyle} value={form.download_pwd} onChange={(e) => setForm({ ...form, download_pwd: e.target.value })} placeholder="选填" />
+                <input style={inputStyle} value={form.download_pwd} onChange={(e) => setForm({ ...form, download_pwd: e.target.value })} placeholder="选填；粘贴文本可自动填" />
               </div>
             </div>
             {form.download_url && (
@@ -393,6 +488,33 @@ export default function MallResourcesPage() {
                 {saving ? '保存中...' : '保存'}
               </button>
             </div>
+
+            {/* 图床链接弹窗 */}
+            {imgDialogOpen && (
+              <div style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', zIndex: 200,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+              }} onClick={(e) => { if (e.target === e.currentTarget) setImgDialogOpen(false); }}>
+                <div style={{ width: 480, maxWidth: '100%', background: '#111827', border: '1px solid #374151', borderRadius: 12, padding: 20 }}>
+                  <h4 style={{ margin: '0 0 10px', fontSize: 15, color: '#f9fafb' }}>插入图床图片</h4>
+                  <p style={{ margin: '0 0 10px', fontSize: 12, color: '#9ca3af' }}>
+                    粘贴图片链接（支持多行/整段文本自动抽取），自动规范化后插入光标处。已自动读取剪贴板。
+                  </p>
+                  <textarea
+                    autoFocus
+                    style={{ ...inputStyle, minHeight: 90, fontFamily: 'monospace' }}
+                    value={imgDialogUrl}
+                    onChange={(e) => setImgDialogUrl(e.target.value)}
+                    placeholder={'https://i.imgur.com/abc.jpg\nhttps://cdn.example.com/pic.png'}
+                  />
+                  {imgDialogMsg && <div style={{ fontSize: 12, color: '#93c5fd', marginTop: 6 }}>{imgDialogMsg}</div>}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 14, justifyContent: 'flex-end' }}>
+                    <button onClick={() => setImgDialogOpen(false)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid #4b5563', background: 'transparent', color: '#9ca3af', cursor: 'pointer' }}>取消</button>
+                    <button onClick={confirmInsertImages} style={{ padding: '6px 20px', borderRadius: 6, border: 'none', background: '#059669', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>插入</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
