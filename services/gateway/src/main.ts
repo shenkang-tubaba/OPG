@@ -61,6 +61,21 @@ function configureBundledWebAssets(app: any): BundledWebConfig | null {
   }
 
   const expressApp = app.getHttpAdapter().getInstance();
+  // LOCAL 存储模式下上传文件落在 process.cwd()/uploads，file_url 返回 /uploads/<key>；
+  // 这里挂静态目录让封面/插图 URL 可直接访问（无 OSS 配置时的兜底）。
+  const uploadsDir = resolve(process.cwd(), 'uploads');
+  if (existsSync(uploadsDir)) {
+    expressApp.use(
+      '/uploads',
+      expressStatic(uploadsDir, {
+        fallthrough: false,
+        setHeaders: (response: any) => {
+          response.setHeader('Cache-Control', 'public, max-age=604800');
+        },
+      }),
+    );
+    console.log(`[BundledWeb] serving local uploads from ${uploadsDir} at /uploads`);
+  }
   expressApp.use(
     expressStatic(distPath, {
       index: false,
