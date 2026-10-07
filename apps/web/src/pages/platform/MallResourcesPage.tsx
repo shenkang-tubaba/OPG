@@ -811,15 +811,12 @@ export default function MallResourcesPage() {
                     className="mall-content-preview"
                     dangerouslySetInnerHTML={{ __html: APP_PREVIEW_CSS + (form.content_html || '<span style="color:#6b7280">（无图文内容）</span>') }}
                   />
-                  {/* 下载区 */}
+                  {/* 下载区（与 App 端一致：单个复制按钮） */}
                   <div style={{ background: '#10131a', border: '1px solid #23272f', borderRadius: 10, padding: 12, marginTop: 10 }}>
                     {form.download_url ? (
                       <>
                         {form.download_pwd && <div style={{ fontSize: 12, color: '#9aa0ae', marginBottom: 8 }}>提取码：<b style={{ color: '#e8eaf0' }}>{form.download_pwd}</b></div>}
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <span style={{ flex: 1, textAlign: 'center', padding: '8px 0', borderRadius: 8, background: '#e8b34b', color: '#171a21', fontSize: 12, fontWeight: 700 }}>复制链接</span>
-                          <span style={{ flex: 1, textAlign: 'center', padding: '8px 0', borderRadius: 8, background: 'rgba(232,179,75,.15)', color: '#e8b34b', fontSize: 12, fontWeight: 700 }}>打开网盘</span>
-                        </div>
+                        <div style={{ textAlign: 'center', padding: '9px 0', borderRadius: 8, background: '#2f6fed', color: '#fff', fontSize: 13, fontWeight: 600 }}>📋 复制链接和提取码</div>
                       </>
                     ) : (
                       <div style={{ fontSize: 12, color: '#6b7280', textAlign: 'center' }}>🔒 会员专享下载链接，开通会员解锁（未填链接时 App 端显示此文案）</div>
