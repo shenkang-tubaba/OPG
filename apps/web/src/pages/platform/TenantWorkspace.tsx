@@ -784,6 +784,13 @@ export default function TenantWorkspace({ appIdOverride }: TenantWorkspaceProps)
   const [acquisitionPage, setAcquisitionPage] = useState(1);
 
   const [redeemPackages, setRedeemPackages] = useState<PlatformRedeemPackageItem[]>([]);
+  // 产品列表筛选/搜索/排序状态 + 预览弹窗
+  const [redeemProductQuery, setRedeemProductQuery] = useState('');
+  const [redeemProductScope, setRedeemProductScope] = useState('');
+  const [redeemProductStatus, setRedeemProductStatus] = useState('');
+  const [redeemProductPayment, setRedeemProductPayment] = useState('');
+  const [redeemProductSort, setRedeemProductSort] = useState('updated');
+  const [productPreview, setProductPreview] = useState<PlatformRedeemPackageItem | null>(null);
   const [paymentOrders, setPaymentOrders] = useState<PlatformPaymentOrderItem[]>([]);
   const [paymentOrdersTotal, setPaymentOrdersTotal] = useState(0);
   const [paymentOrdersPage, setPaymentOrdersPage] = useState(1);
@@ -5720,9 +5727,79 @@ const agents = await opg.agents.list();`}</pre>
     </div>
   );
 
-  const renderRedeemProducts = () => (
+  const renderRedeemProducts = () => {
+    // ===== 列表筛选/搜索/排序（面向百级产品管理） =====
+    const rpSearch = redeemProductQuery.toLowerCase();
+    const scopeLabelOf = (item: PlatformRedeemPackageItem) => {
+      const scopes = (item.grants || []).map((g) => g.scope);
+      if (scopes.includes('svip_membership')) return 'svip_membership';
+      if (scopes.includes('vip_membership')) return 'vip_membership';
+      if (scopes.includes('ai_membership')) return 'ai_membership';
+      return 'app_membership';
+    };
+    const filteredPackages = redeemPackages
+      .filter((item) => {
+        if (redeemProductScope && scopeLabelOf(item) !== redeemProductScope) return false;
+        if (redeemProductStatus === 'active' && !item.is_active) return false;
+        if (redeemProductStatus === 'inactive' && item.is_active) return false;
+        if (redeemProductPayment === 'configured' && !item.payment_product) return false;
+        if (redeemProductPayment === 'unconfigured' && item.payment_product) return false;
+        if (rpSearch) {
+          const hay = `${item.name} ${item.description || ''} ${item.id}`.toLowerCase();
+          if (!hay.includes(rpSearch)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (redeemProductSort === 'price_asc') return a.price_cny - b.price_cny;
+        if (redeemProductSort === 'price_desc') return b.price_cny - a.price_cny;
+        if (redeemProductSort === 'name') return a.name.localeCompare(b.name, 'zh-CN');
+        return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+      });
+    return (
     <section className="card">
-      <div className="platform-section-head"><h3>产品列表</h3></div>
+      <div className="platform-section-head"><h3>产品列表{redeemPackages.length ? `（${filteredPackages.length}/${redeemPackages.length}）` : ''}</h3></div>
+      {/* 筛选工具栏 */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+        <input
+          value={redeemProductQuery}
+          onChange={(e) => setRedeemProductQuery(e.target.value)}
+          placeholder="🔍 搜索名称/描述/ID"
+          style={{ width: 200, padding: '6px 10px', borderRadius: 6, border: '1px solid #374151', background: '#0b0f19', color: '#e5e7eb', fontSize: 12 }}
+        />
+        <select value={redeemProductScope} onChange={(e) => setRedeemProductScope(e.target.value)} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #374151', background: '#0b0f19', color: '#e5e7eb', fontSize: 12 }}>
+          <option value="">全部会员类型</option>
+          <option value="svip_membership">SVIP</option>
+          <option value="vip_membership">VIP</option>
+          <option value="app_membership">应用会员</option>
+          <option value="ai_membership">AI 会员</option>
+        </select>
+        <select value={redeemProductStatus} onChange={(e) => setRedeemProductStatus(e.target.value)} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #374151', background: '#0b0f19', color: '#e5e7eb', fontSize: 12 }}>
+          <option value="">全部状态</option>
+          <option value="active">上架中</option>
+          <option value="inactive">已下架</option>
+        </select>
+        <select value={redeemProductPayment} onChange={(e) => setRedeemProductPayment(e.target.value)} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #374151', background: '#0b0f19', color: '#e5e7eb', fontSize: 12 }}>
+          <option value="">支付：全部</option>
+          <option value="configured">已配置支付</option>
+          <option value="unconfigured">未配置</option>
+        </select>
+        <select value={redeemProductSort} onChange={(e) => setRedeemProductSort(e.target.value)} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #374151', background: '#0b0f19', color: '#e5e7eb', fontSize: 12 }}>
+          <option value="updated">按更新时间</option>
+          <option value="price_desc">价格从高到低</option>
+          <option value="price_asc">价格从低到高</option>
+          <option value="name">按名称</option>
+        </select>
+        {(redeemProductQuery || redeemProductScope || redeemProductStatus || redeemProductPayment) && (
+          <button
+            type="button"
+            onClick={() => { setRedeemProductQuery(''); setRedeemProductScope(''); setRedeemProductStatus(''); setRedeemProductPayment(''); }}
+            style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #4b5563', background: 'transparent', color: '#9ca3af', fontSize: 12, cursor: 'pointer' }}
+          >
+            清空筛选
+          </button>
+        )}
+      </div>
       <div className="platform-api-table-wrap">
         <table className="table redeem-products-table">
           <thead>
@@ -5739,7 +5816,7 @@ const agents = await opg.agents.list();`}</pre>
             </tr>
           </thead>
           <tbody>
-            {redeemPackages.map((item) => {
+            {filteredPackages.map((item) => {
               const payment = item.payment_product || null;
               const paymentType = String(payment?.type || '').toUpperCase();
               const paymentStatus = String(payment?.status || '').toUpperCase();
@@ -5800,6 +5877,9 @@ const agents = await opg.agents.list();`}</pre>
                       )}
                       {canManageProducts && (
                         <>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setProductPreview(item)}>
+                            预览
+                          </button>
                           <button className="btn btn-secondary btn-sm" onClick={() => editPackage(item)}>
                             编辑
                           </button>
@@ -5847,16 +5927,17 @@ const agents = await opg.agents.list();`}</pre>
                 </tr>
               );
             })}
-            {!redeemPackages.length && (
+            {!filteredPackages.length && (
               <tr>
-                <td colSpan={9}>暂无产品</td>
+                <td colSpan={9}>{redeemPackages.length ? '没有符合筛选条件的产品' : '暂无产品'}</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
     </section>
-  );
+    );
+  };
 
   const renderRedeemOrders = () => {
     const totalPages = Math.max(Math.ceil(paymentOrdersTotal / 20), 1);
@@ -6359,6 +6440,42 @@ const agents = await opg.agents.list();`}</pre>
           {activeSection === 'mall' && <MallResourcesPage />}
         </section>
       </div>
+
+      {/* 产品 App 端预览弹窗 */}
+      {productPreview && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.75)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setProductPreview(null); }}
+        >
+          <div style={{ width: 380, maxWidth: '100%', maxHeight: '88vh', overflowY: 'auto', background: '#171a21', borderRadius: 18, padding: 16, border: '1px solid #2c313c' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#e8eaf0' }}>📱 产品预览（App 商城样式）</span>
+              <button onClick={() => setProductPreview(null)} style={{ background: 'none', border: 'none', color: '#9aa0ae', fontSize: 16, cursor: 'pointer' }}>✕</button>
+            </div>
+            {productPreview.cover_url && (
+              <img src={productPreview.cover_url} alt="封面" style={{ width: '100%', height: 180, objectFit: 'cover', borderRadius: 12, marginBottom: 12, display: 'block', background: '#10131a' }} />
+            )}
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#f3f4f6', marginBottom: 6, overflowWrap: 'break-word' }}>{productPreview.name}</div>
+            {productPreview.description && <div style={{ fontSize: 12, color: '#9aa0ae', lineHeight: 1.6, marginBottom: 10 }}>{productPreview.description}</div>}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: '#e8b34b' }}>¥{Number(productPreview.price_cny || 0).toFixed(2)}</span>
+              <span style={{ fontSize: 12, color: '#9aa0ae' }}>/ {resolveMembershipGrantDays(productPreview.grants || [])} 天</span>
+              <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#171a21', background: 'linear-gradient(135deg,#f5d47a,#d99a1f)', padding: '3px 10px', borderRadius: 10 }}>
+                {formatMembershipScopeLabel(productPreview.grants || [])}
+              </span>
+            </div>
+            <div style={{ background: '#10131a', border: '1px solid #23272f', borderRadius: 10, padding: 12 }}>
+              <div style={{ textAlign: 'center', padding: '10px 0', borderRadius: 10, background: 'linear-gradient(135deg,#f5d47a,#d99a1f)', color: '#171a21', fontSize: 14, fontWeight: 800 }}>
+                {productPreview.is_active ? '立即购买' : '已下架'}
+              </div>
+              <div style={{ fontSize: 11, color: '#6b7280', textAlign: 'center', marginTop: 8 }}>
+                {productPreview.payment_product ? (String(productPreview.payment_product.type).toUpperCase() === 'RECURRING' ? '支持周期扣款' : '单次支付') : '未配置支付（用户暂无法购买）'}
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: '#4b5563', textAlign: 'center', marginTop: 10 }}>预览仅供排版参考，实际以 App 渲染为准</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
