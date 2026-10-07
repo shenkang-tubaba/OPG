@@ -290,7 +290,7 @@ export default function MallResourcesPage() {
     <div style={{ padding: 20, color: '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: 18, color: '#f9fafb' }}>商城资源库</h2>
-        <span style={{ fontSize: 12, color: '#9ca3af' }}>VIP 看介绍 / SVIP 拿下载链接；每天凌晨自动巡检链接有效性</span>
+        <span style={{ fontSize: 12, color: '#9ca3af' }}>资料预览对所有人开放；普通资料 VIP 可下载，高级资料仅 SVIP 可下载；每天凌晨自动巡检链接</span>
         <div style={{ flex: 1 }} />
         <button
           onClick={checkLinks}
@@ -336,7 +336,7 @@ export default function MallResourcesPage() {
                   fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
                   background: item.required_tier === 'SVIP' ? '#b8912a' : '#374151',
                   color: item.required_tier === 'SVIP' ? '#111827' : '#d1d5db',
-                }}>{item.required_tier}</span>
+                }}>{item.required_tier === 'SVIP' ? '高级' : '普通'}</span>
                 <span style={{ fontSize: 11, color: st.color }}>● {st.label}{item.link_fail_count > 0 ? `（失败${item.link_fail_count}次）` : ''}</span>
                 {!item.published && <span style={{ fontSize: 11, color: '#d97706' }}>未发布</span>}
                 <div style={{ flex: 1 }} />
@@ -370,8 +370,8 @@ export default function MallResourcesPage() {
               <div>
                 <label style={labelStyle}>可见档位</label>
                 <select style={inputStyle} value={form.required_tier} onChange={(e) => setForm({ ...form, required_tier: e.target.value as 'VIP' | 'SVIP' })}>
-                  <option value="VIP">VIP（介绍可见，下载需 SVIP）</option>
-                  <option value="SVIP">SVIP（整体仅 SVIP 可见）</option>
+                  <option value="VIP">普通资料（预览开放，VIP 及以上可下载）</option>
+                  <option value="SVIP">高级资料（预览开放，仅 SVIP 可下载）</option>
                 </select>
               </div>
             </div>
