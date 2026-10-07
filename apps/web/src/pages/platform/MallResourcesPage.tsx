@@ -4,6 +4,7 @@ import {
   platformApi,
   type MallResourceItem,
   type MallResourcePayload,
+  type MallTagItem,
 } from '@/lib/api';
 import { pickApiErrorMessage } from '@/lib/api-response';
 import { compressImage, formatBytes } from '@/lib/image-compress';
@@ -39,6 +40,7 @@ interface ResourceFormState {
   content_html: string;
   cover_url: string;
   required_tier: 'VIP' | 'SVIP';
+  tags: string[];
   download_url: string;
   download_pwd: string;
   sort_order: number;
@@ -53,6 +55,7 @@ const emptyForm = (): ResourceFormState => ({
   content_html: '',
   cover_url: '',
   required_tier: 'VIP',
+  tags: [],
   download_url: '',
   download_pwd: '',
   sort_order: 0,
@@ -69,6 +72,14 @@ export default function MallResourcesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
+  // 标签管理
+  const [tags, setTags] = useState<MallTagItem[]>([]);
+  const [tagFilter, setTagFilter] = useState(''); // 按标签筛选列表
+  const [newTagName, setNewTagName] = useState('');
+  const [editingTag, setEditingTag] = useState<MallTagItem | null>(null);
+  const [editingTagName, setEditingTagName] = useState('');
+  const [tagInput, setTagInput] = useState(''); // 表单里的标签输入
+  const [manageTagsOpen, setManageTagsOpen] = useState(false);
   const [coverUploading, setCoverUploading] = useState(false);
   const [inlineUploading, setInlineUploading] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -84,8 +95,12 @@ export default function MallResourcesPage() {
     if (!appId) return;
     setLoading(true);
     try {
-      const data = await platformApi.listMallResources(appId);
+      const [data, tagData] = await Promise.all([
+        platformApi.listMallResources(appId),
+        platformApi.listMallTags(appId).catch(() => ({ items: [] })),
+      ]);
       setItems(data.items || []);
+      setTags(tagData.items || []);
     } catch (error: any) {
       setMessage({ type: 'error', text: pickApiErrorMessage(error, '加载资源列表失败') });
     } finally {
@@ -109,11 +124,13 @@ export default function MallResourcesPage() {
       content_html: item.content_html,
       cover_url: item.cover_url,
       required_tier: item.required_tier,
+      tags: item.tags || [],
       download_url: item.download_url || '',
       download_pwd: item.download_pwd || '',
       sort_order: item.sort_order,
       published: item.published,
     });
+    setTagInput('');
     setFormOpen(true);
   };
 
@@ -131,6 +148,7 @@ export default function MallResourcesPage() {
       content_html: form.content_html,
       cover_url: form.cover_url,
       required_tier: form.required_tier,
+      tags: form.tags,
       download_url: form.download_url || null,
       download_pwd: form.download_pwd || null,
       sort_order: form.sort_order,
@@ -179,6 +197,63 @@ export default function MallResourcesPage() {
   };
 
   const catLabel = (key: string) => CATEGORIES.find((c) => c.key === key)?.label || key;
+
+  // ===== 标签管理 =====
+  const createTag = async () => {
+    const name = newTagName.trim();
+    if (!name) return;
+    try {
+      await platformApi.createMallTag(appId, name);
+      setNewTagName('');
+      load();
+      setMessage({ type: 'success', text: `标签「${name}」已创建` });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: pickApiErrorMessage(error, '创建标签失败') });
+    }
+  };
+
+  const renameTag = async () => {
+    if (!editingTag || !editingTagName.trim()) return;
+    try {
+      await platformApi.updateMallTag(appId, editingTag.id, editingTagName.trim());
+      setEditingTag(null);
+      load();
+      setMessage({ type: 'success', text: `标签已改名为「${editingTagName.trim()}」，资源已同步` });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: pickApiErrorMessage(error, '改名失败') });
+    }
+  };
+
+  const removeTag = async (tag: MallTagItem) => {
+    const tips = tag.usage_count > 0 ? `该标签被 ${tag.usage_count} 个资源使用，删除后会从这些资源中同步移除。` : '该标签暂未被使用。';
+    if (!window.confirm(`确认删除标签「${tag.name}」？${tips}`)) return;
+    try {
+      await platformApi.deleteMallTag(appId, tag.id);
+      if (tagFilter === tag.name) setTagFilter('');
+      load();
+      setMessage({ type: 'success', text: `标签「${tag.name}」已删除` });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: pickApiErrorMessage(error, '删除标签失败') });
+    }
+  };
+
+  // 表单内标签操作
+  const addTagToForm = (name: string) => {
+    const t = name.trim();
+    if (!t) return;
+    setForm((prev) => ({ ...prev, tags: prev.tags.includes(t) ? prev.tags : [...prev.tags, t].slice(0, 16) }));
+    setTagInput('');
+  };
+
+  const removeTagFromForm = (name: string) => {
+    setForm((prev) => ({ ...prev, tags: prev.tags.filter((t) => t !== name) }));
+  };
+
+  // 列表按标签 + 分类过滤
+  const filteredItems = items.filter((it) => {
+    if (tagFilter && !(it.tags || []).includes(tagFilter)) return false;
+    return true;
+  });
 
   // 图床链接弹窗：粘贴 → 自动规范化 → 插入光标处
   const openImgDialog = () => {
@@ -293,6 +368,12 @@ export default function MallResourcesPage() {
         <span style={{ fontSize: 12, color: '#9ca3af' }}>资料预览对所有人开放；普通资料 VIP 可下载，高级资料仅 SVIP 可下载；每天凌晨自动巡检链接</span>
         <div style={{ flex: 1 }} />
         <button
+          onClick={() => setManageTagsOpen((v) => !v)}
+          style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#e8b34b', cursor: 'pointer' }}
+        >
+          🏷 标签管理{tags.length ? `（${tags.length}）` : ''}
+        </button>
+        <button
           onClick={checkLinks}
           disabled={checking || !items.length}
           style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#e5e7eb', cursor: 'pointer' }}
@@ -315,15 +396,83 @@ export default function MallResourcesPage() {
         }}>{message.text}</div>
       )}
 
+      {/* 标签管理面板 */}
+      {manageTagsOpen && (
+        <div style={{ background: '#111827', border: '1px solid #374151', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <input
+              style={{ ...inputStyle, width: 200 }}
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') createTag(); }}
+              placeholder="新标签名，如：股票讲座、基金、量学云讲堂"
+            />
+            <button onClick={createTag} disabled={!newTagName.trim()} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: '#2563eb', color: '#fff', cursor: newTagName.trim() ? 'pointer' : 'not-allowed', fontSize: 12 }}>+ 新建</button>
+            <span style={{ fontSize: 11, color: '#6b7280', alignSelf: 'center' }}>改名会同步更新所有使用该标签的资源；删除会从资源中移除</span>
+          </div>
+          {!tags.length ? (
+            <div style={{ fontSize: 12, color: '#6b7280' }}>暂无标签，新建后可在资源表单中勾选</div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {tags.map((t) => (
+                <span key={t.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#1f2937', border: '1px solid #374151', borderRadius: 14, padding: '4px 10px', fontSize: 12, color: '#d1d5db' }}>
+                  {editingTag?.id === t.id ? (
+                    <>
+                      <input
+                        autoFocus
+                        value={editingTagName}
+                        onChange={(e) => setEditingTagName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') renameTag(); if (e.key === 'Escape') setEditingTag(null); }}
+                        style={{ width: 110, background: '#0b0f19', border: '1px solid #4b5563', borderRadius: 4, color: '#e5e7eb', fontSize: 12, padding: '2px 6px' }}
+                      />
+                      <button onClick={renameTag} style={{ background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', fontSize: 11 }}>✓</button>
+                      <button onClick={() => setEditingTag(null)} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                    </>
+                  ) : (
+                    <>
+                      <span
+                        onClick={() => setTagFilter(tagFilter === t.name ? '' : t.name)}
+                        style={{ cursor: 'pointer', color: tagFilter === t.name ? '#e8b34b' : '#d1d5db', fontWeight: tagFilter === t.name ? 700 : 400 }}
+                        title="点击筛选该标签的资源"
+                      >{t.name}{t.usage_count > 0 ? ` (${t.usage_count})` : ''}</span>
+                      <button onClick={() => { setEditingTag(t); setEditingTagName(t.name); }} style={{ background: 'none', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: 11 }} title="改名">✎</button>
+                      <button onClick={() => removeTag(t)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', fontSize: 11 }} title="删除">✕</button>
+                    </>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 标签筛选条（收起管理面板时也可见） */}
+      {!manageTagsOpen && tags.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#6b7280' }}>按标签筛选：</span>
+          <span
+            onClick={() => setTagFilter('')}
+            style={{ cursor: 'pointer', fontSize: 11, padding: '3px 10px', borderRadius: 12, border: '1px solid #374151', color: tagFilter ? '#9ca3af' : '#e8b34b', fontWeight: tagFilter ? 400 : 700, background: tagFilter ? 'transparent' : 'rgba(232,179,75,.1)' }}
+          >全部</span>
+          {tags.map((t) => (
+            <span
+              key={t.id}
+              onClick={() => setTagFilter(tagFilter === t.name ? '' : t.name)}
+              style={{ cursor: 'pointer', fontSize: 11, padding: '3px 10px', borderRadius: 12, border: '1px solid #374151', background: tagFilter === t.name ? 'rgba(232,179,75,.12)' : 'transparent', color: tagFilter === t.name ? '#e8b34b' : '#9ca3af', fontWeight: tagFilter === t.name ? 700 : 400 }}
+            >{t.name}{t.usage_count > 0 ? ` (${t.usage_count})` : ''}</span>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ color: '#9ca3af', fontSize: 13 }}>加载中...</div>
-      ) : !items.length ? (
+      ) : !filteredItems.length ? (
         <div style={{ color: '#9ca3af', fontSize: 13, padding: 24, border: '1px dashed #374151', borderRadius: 8, textAlign: 'center' }}>
-          暂无资源，点击右上角「新建资源」添加第一份电子书/教材/指标
+          {items.length ? '没有符合标签筛选的资源' : '暂无资源，点击右上角「新建资源」添加第一份电子书/教材/指标'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {items.map((item) => {
+          {filteredItems.map((item) => {
             const st = LINK_STATUS_MAP[item.link_status] || LINK_STATUS_MAP.unknown;
             return (
               <div key={item.id} style={{
@@ -336,7 +485,10 @@ export default function MallResourcesPage() {
                   fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
                   background: item.required_tier === 'SVIP' ? '#b8912a' : '#374151',
                   color: item.required_tier === 'SVIP' ? '#111827' : '#d1d5db',
-                }}>{item.required_tier === 'SVIP' ? '高级' : '普通'}</span>
+                }}                >{item.required_tier === 'SVIP' ? '高级' : '普通'}</span>
+                {(item.tags || []).map((t) => (
+                  <span key={t} style={{ fontSize: 11, color: '#93c5fd', background: 'rgba(59,130,246,.1)', padding: '2px 8px', borderRadius: 10 }}>{t}</span>
+                ))}
                 <span style={{ fontSize: 11, color: st.color }}>● {st.label}{item.link_fail_count > 0 ? `（失败${item.link_fail_count}次）` : ''}</span>
                 {!item.published && <span style={{ fontSize: 11, color: '#d97706' }}>未发布</span>}
                 <div style={{ flex: 1 }} />
@@ -374,6 +526,34 @@ export default function MallResourcesPage() {
                   <option value="SVIP">高级资料（预览开放，仅 SVIP 可下载）</option>
                 </select>
               </div>
+            </div>
+
+            <label style={labelStyle}>资料标签（可多选，方便用户筛选）</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+              {form.tags.map((t) => (
+                <span key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 10px', borderRadius: 12, background: 'rgba(59,130,246,.12)', color: '#93c5fd', border: '1px solid rgba(59,130,246,.3)' }}>
+                  {t}
+                  <button type="button" onClick={() => removeTagFromForm(t)} style={{ background: 'none', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+                </span>
+              ))}
+              {!form.tags.length && <span style={{ fontSize: 11, color: '#6b7280' }}>未选标签</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <input
+                style={{ ...inputStyle, width: 160, padding: '5px 8px', fontSize: 12 }}
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTagToForm(tagInput); } }}
+                placeholder="输入标签名回车添加"
+              />
+              {tags.filter((t) => !form.tags.includes(t.name)).slice(0, 8).map((t) => (
+                <button
+                  key={t.id} type="button"
+                  onClick={() => addTagToForm(t.name)}
+                  style={{ padding: '4px 10px', borderRadius: 12, border: '1px dashed #4b5563', background: 'transparent', color: '#9ca3af', fontSize: 11, cursor: 'pointer' }}
+                  title="点击快速添加"
+                >+ {t.name}</button>
+              ))}
             </div>
 
             <label style={labelStyle}>简介</label>
@@ -558,6 +738,11 @@ export default function MallResourcesPage() {
                     <span style={{ fontSize: 10, color: '#9aa0ae', background: '#1c1f26', padding: '2px 8px', borderRadius: 8 }}>{CATEGORIES.find(c => c.key === form.category)?.label || form.category}</span>
                     {form.required_tier === 'SVIP' && <span style={{ fontSize: 10, fontWeight: 700, color: '#e8b34b', background: 'rgba(232,179,75,.12)', padding: '2px 8px', borderRadius: 8 }}>SVIP</span>}
                   </div>
+                  {(form.tags || []).length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+                      {form.tags.map((t) => <span key={t} style={{ fontSize: 10, color: '#93c5fd', background: 'rgba(59,130,246,.12)', padding: '2px 8px', borderRadius: 8 }}>{t}</span>)}
+                    </div>
+                  )}
                   {form.summary && <div style={{ fontSize: 12, color: '#9aa0ae', marginBottom: 10, lineHeight: 1.6 }}>{form.summary}</div>}
                   {/* 图文：模拟 App 深色卡片渲染 */}
                   <div
