@@ -791,17 +791,6 @@ export default function TenantWorkspace({ appIdOverride }: TenantWorkspaceProps)
   const [redeemProductPayment, setRedeemProductPayment] = useState('');
   const [redeemProductSort, setRedeemProductSort] = useState('updated');
   const [productPreview, setProductPreview] = useState<PlatformRedeemPackageItem | null>(null);
-  // 主题切换（暗色/亮色，localStorage 持久化，main.tsx 启动时恢复）
-  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
-    (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark') ? 'dark' : 'light',
-  );
-  const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-    else document.documentElement.removeAttribute('data-theme');
-    try { localStorage.setItem('opg-theme', next); } catch { /* ignore */ }
-  };
   const [paymentOrders, setPaymentOrders] = useState<PlatformPaymentOrderItem[]>([]);
   const [paymentOrdersTotal, setPaymentOrdersTotal] = useState(0);
   const [paymentOrdersPage, setPaymentOrdersPage] = useState(1);
@@ -6392,19 +6381,9 @@ const agents = await opg.agents.list();`}</pre>
       <div className="tenant-workspace-shell">
         <aside className="tenant-workspace-sidebar">
           <div className="tenant-workspace-sidebar-body">
-            <div className="tenant-workspace-appcard" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <strong>{appDetail?.name || '应用工作区'}</strong>
-                <span style={{ display: 'block' }}>{appDetail ? `应用标识：${appDetail.slug}` : '正在加载应用信息'}</span>
-              </div>
-              <button
-                type="button"
-                className="theme-toggle"
-                onClick={toggleTheme}
-                title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
-              >
-                {theme === 'dark' ? '☀️' : '🌙'}
-              </button>
+            <div className="tenant-workspace-appcard">
+              <strong>{appDetail?.name || '应用工作区'}</strong>
+              <span>{appDetail ? `应用标识：${appDetail.slug}` : '正在加载应用信息'}</span>
             </div>
 
             <nav className="tenant-workspace-nav">
