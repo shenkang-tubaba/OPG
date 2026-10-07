@@ -2853,6 +2853,7 @@ export interface MallResourceItem {
   content_html: string;
   cover_url: string;
   required_tier: 'VIP' | 'SVIP';
+  tags: string[];
   download_url: string | null;
   download_pwd: string | null;
   platform: string | null;
@@ -2872,10 +2873,18 @@ export interface MallResourcePayload {
   content_html?: string;
   cover_url?: string;
   required_tier?: 'VIP' | 'SVIP';
+  tags?: string[];
   download_url?: string | null;
   download_pwd?: string | null;
   sort_order?: number;
   published?: boolean;
+}
+
+export interface MallTagItem {
+  id: string;
+  name: string;
+  sort_order: number;
+  usage_count: number;
 }
 
 export interface PlatformRedeemGrantInput {
@@ -5565,6 +5574,27 @@ export const platformApi = {
 
   checkMallResourceLinks: async (appId: string) => {
     const response = await apiClient.getClient().post(`/platform-admin/apps/${appId}/mall-resources/check-links`, {});
+    return response.data?.data || response.data;
+  },
+
+  // ===== 商城标签管理 =====
+  listMallTags: async (appId: string): Promise<{ total: number; items: MallTagItem[] }> => {
+    const response = await apiClient.getClient().get(`/platform-admin/apps/${appId}/mall-resources/tags`);
+    return response.data?.data || response.data;
+  },
+
+  createMallTag: async (appId: string, name: string, sortOrder = 0): Promise<MallTagItem> => {
+    const response = await apiClient.getClient().post(`/platform-admin/apps/${appId}/mall-resources/tags`, { name, sort_order: sortOrder });
+    return response.data?.data || response.data;
+  },
+
+  updateMallTag: async (appId: string, tagId: string, name: string, sortOrder?: number): Promise<MallTagItem> => {
+    const response = await apiClient.getClient().put(`/platform-admin/apps/${appId}/mall-resources/tags/${tagId}`, { name, sort_order: sortOrder });
+    return response.data?.data || response.data;
+  },
+
+  deleteMallTag: async (appId: string, tagId: string): Promise<{ deleted: boolean }> => {
+    const response = await apiClient.getClient().delete(`/platform-admin/apps/${appId}/mall-resources/tags/${tagId}`);
     return response.data?.data || response.data;
   },
 
