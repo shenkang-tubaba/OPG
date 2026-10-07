@@ -67,4 +67,38 @@ export class MallResourcesPlatformController {
     const appId = await this.resolveAppId(appIdOrSlug);
     return this.linkCheckWorker.checkAll(appId);
   }
+
+  // ===== 标签管理 =====
+
+  @Get('tags')
+  @ApiOperation({ summary: '标签列表（含引用计数）' })
+  async listTags(@Param('app_id') appIdOrSlug: string) {
+    const appId = await this.resolveAppId(appIdOrSlug);
+    return this.service.adminListTags(appId);
+  }
+
+  @Post('tags')
+  @ApiOperation({ summary: '新建标签' })
+  async createTag(@Param('app_id') appIdOrSlug: string, @Body() body: Record<string, unknown>) {
+    const appId = await this.resolveAppId(appIdOrSlug);
+    return this.service.adminCreateTag(appId, body);
+  }
+
+  @Put('tags/:tag_id')
+  @ApiOperation({ summary: '重命名标签（同步更新资源内嵌 tags）' })
+  async updateTag(
+    @Param('app_id') appIdOrSlug: string,
+    @Param('tag_id') tagId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const appId = await this.resolveAppId(appIdOrSlug);
+    return this.service.adminUpdateTag(appId, tagId, body);
+  }
+
+  @Delete('tags/:tag_id')
+  @ApiOperation({ summary: '删除标签（同步从资源中移除）' })
+  async deleteTag(@Param('app_id') appIdOrSlug: string, @Param('tag_id') tagId: string) {
+    const appId = await this.resolveAppId(appIdOrSlug);
+    return this.service.adminDeleteTag(appId, tagId);
+  }
 }
