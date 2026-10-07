@@ -117,7 +117,18 @@ export class MallResourcesService implements OnModuleInit {
     return 'NONE';
   }
 
-  /** 序列化：canDownload=true（任意会员）返回链接，否则物理剔除 */
+  /**
+   * 权益模型（2026-10 最终版）：
+   * - required_tier 为资料级别标签：VIP=普通资料，SVIP=高级资料
+   * - 所有人（含游客）可预览全部资源的图文介绍
+   * - 下载：普通资料 → VIP 或 SVIP 均可；高级资料 → 仅 SVIP
+   */
+  private canDownloadRow(row: MallResourceRow, tier: MemberTier): boolean {
+    if (String(row.required_tier).toUpperCase() === 'SVIP') return tier === 'SVIP';
+    return tier !== 'NONE'; // 普通资料：任意付费会员
+  }
+
+  /** 序列化：canDownload 由资料级别 × 用户档位决定 */
   private serialize(row: MallResourceRow, tier: MemberTier, withLink: boolean) {
     const base: Record<string, unknown> = {
       id: row.id,
@@ -140,7 +151,7 @@ export class MallResourcesService implements OnModuleInit {
       base.link_checked_at = row.link_checked_at;
       base.link_fail_count = row.link_fail_count;
     } else {
-      // 未开通会员：不带链接字段（物理不返回，防抓包）
+      // 权限不足：不带链接字段（物理不返回，防抓包）
       base.download_url = null;
       base.download_pwd = null;
       base.link_locked = true;
@@ -149,16 +160,12 @@ export class MallResourcesService implements OnModuleInit {
   }
 
   /**
-   * 用户端资源列表（2026-10 权益模型：所有人可看介绍，VIP/SVIP 会员可下载）
-   * - 未登录/未开通会员：全部资源介绍可见，download_url 不返回（link_locked=true）
-   * - VIP 或 SVIP：返回全部资源的 download_url / download_pwd / link_status
-   * - required_tier 字段保留为展示标签，不再参与可见性过滤
+   * 用户端资源列表：所有人可预览；下载按资料级别控制（普通=VIP+，高级=SVIP）
    */
   async listForUser(appSlug: string, userId: string, category?: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
     const tier = await this.resolveMemberTier(appId, userId);
-    const canDownload = tier !== 'NONE';
 
     const rows = await (this.prisma.$queryRawUnsafe(
       `SELECT * FROM mall_resources
@@ -168,12 +175,13 @@ export class MallResourcesService implements OnModuleInit {
       appId,
     ) as Promise<MallResourceRow[]>);
 
-    const items = rows.map((r) => this.serialize(r, tier, canDownload));
+    const items = rows.map((r) => this.serialize(r, tier, this.canDownloadRow(r, tier)));
+    const canDownload = rows.some((r) => this.canDownloadRow(r, tier));
 
     return { tier, can_download: canDownload, total: items.length, items };
   }
 
-  /** 获取单资源（用户端）：介绍所有人可见，会员给链接 */
+  /** 获取单资源（用户端）：预览开放，下载按资料级别控制 */
   async getForUser(appSlug: string, userId: string, resourceId: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
@@ -185,8 +193,7 @@ export class MallResourcesService implements OnModuleInit {
     ) as Promise<MallResourceRow[]>);
     const row = rows[0];
     if (!row) throw new NotFoundException('资源不存在');
-    const canDownload = tier !== 'NONE';
-    return this.serialize(row, tier, canDownload);
+    return this.serialize(row, tier, this.canDownloadRow(row, tier));
   }
 
   // ===== 平台管理端 CRUD =====
