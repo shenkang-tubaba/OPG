@@ -80,6 +80,7 @@ export default function MallResourcesPage() {
   const [editingTagName, setEditingTagName] = useState('');
   const [tagInput, setTagInput] = useState(''); // 表单里的标签输入
   const [manageTagsOpen, setManageTagsOpen] = useState(false);
+  const [searchText, setSearchText] = useState(''); // 列表搜索
   const [coverUploading, setCoverUploading] = useState(false);
   const [inlineUploading, setInlineUploading] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -249,9 +250,14 @@ export default function MallResourcesPage() {
     setForm((prev) => ({ ...prev, tags: prev.tags.filter((t) => t !== name) }));
   };
 
-  // 列表按标签 + 分类过滤
+  // 列表按搜索词 + 标签过滤
   const filteredItems = items.filter((it) => {
     if (tagFilter && !(it.tags || []).includes(tagFilter)) return false;
+    if (searchText.trim()) {
+      const kw = searchText.trim().toLowerCase();
+      const hay = `${it.title} ${it.summary || ''} ${(it.tags || []).join(' ')}`.toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
     return true;
   });
 
@@ -371,7 +377,7 @@ export default function MallResourcesPage() {
           onClick={() => setManageTagsOpen((v) => !v)}
           style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#e8b34b', cursor: 'pointer' }}
         >
-          🏷 标签管理{tags.length ? `（${tags.length}）` : ''}
+          🏷 标签管理{tags.length ? `（${tags.length}）` : ''} {manageTagsOpen ? '▲' : '▼'}
         </button>
         <button
           onClick={checkLinks}
@@ -395,6 +401,14 @@ export default function MallResourcesPage() {
           color: message.type === 'success' ? '#6ee7b7' : '#fca5a5',
         }}>{message.text}</div>
       )}
+
+      {/* 搜索框 */}
+      <input
+        style={{ ...inputStyle, width: 260, marginBottom: 12 }}
+        value={searchText}
+        onChange={(e) => setSearchText(e.target.value)}
+        placeholder="🔍 搜索标题/简介/标签"
+      />
 
       {/* 标签管理面板 */}
       {manageTagsOpen && (
@@ -435,8 +449,8 @@ export default function MallResourcesPage() {
                         style={{ cursor: 'pointer', color: tagFilter === t.name ? '#e8b34b' : '#d1d5db', fontWeight: tagFilter === t.name ? 700 : 400 }}
                         title="点击筛选该标签的资源"
                       >{t.name}{t.usage_count > 0 ? ` (${t.usage_count})` : ''}</span>
-                      <button onClick={() => { setEditingTag(t); setEditingTagName(t.name); }} style={{ background: 'none', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: 11 }} title="改名">✎</button>
-                      <button onClick={() => removeTag(t)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer', fontSize: 11 }} title="删除">✕</button>
+                      <button onClick={() => { setEditingTag(t); setEditingTagName(t.name); }} style={{ background: 'rgba(147,197,253,.15)', border: '1px solid #4b5563', color: '#93c5fd', cursor: 'pointer', fontSize: 10, padding: '1px 6px', borderRadius: 4 }} title="改名">改名</button>
+                      <button onClick={() => removeTag(t)} style={{ background: 'rgba(252,165,165,.12)', border: '1px solid #7f1d1d', color: '#fca5a5', cursor: 'pointer', fontSize: 10, padding: '1px 6px', borderRadius: 4 }} title="删除">删除</button>
                     </>
                   )}
                 </span>
@@ -529,31 +543,75 @@ export default function MallResourcesPage() {
             </div>
 
             <label style={labelStyle}>资料标签（可多选，方便用户筛选）</label>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            {/* 已选标签 */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
               {form.tags.map((t) => (
                 <span key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '3px 10px', borderRadius: 12, background: 'rgba(59,130,246,.12)', color: '#93c5fd', border: '1px solid rgba(59,130,246,.3)' }}>
                   {t}
                   <button type="button" onClick={() => removeTagFromForm(t)} style={{ background: 'none', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
                 </span>
               ))}
-              {!form.tags.length && <span style={{ fontSize: 11, color: '#6b7280' }}>未选标签</span>}
+              {!form.tags.length && <span style={{ fontSize: 11, color: '#6b7280' }}>未选标签——点下面已有标签即可勾选</span>}
             </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* 已建标签：全部平铺点选（勾选高亮），带过滤输入 */}
+            {tags.length > 0 && (
+              <div style={{ background: '#0b0f19', border: '1px solid #23272f', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+                  <input
+                    style={{ ...inputStyle, width: 150, padding: '4px 8px', fontSize: 11 }}
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    placeholder="🔎 过滤已有标签…"
+                  />
+                  <span style={{ fontSize: 10, color: '#6b7280' }}>点击切换选中状态</span>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {tags
+                    .filter((t) => !tagInput.trim() || t.name.toLowerCase().includes(tagInput.trim().toLowerCase()))
+                    .map((t) => {
+                      const selected = form.tags.includes(t.name);
+                      return (
+                        <button
+                          key={t.id} type="button"
+                          onClick={() => (selected ? removeTagFromForm(t.name) : addTagToForm(t.name))}
+                          style={{
+                            padding: '4px 12px', borderRadius: 14, fontSize: 12, cursor: 'pointer',
+                            border: selected ? '1px solid #2f6fed' : '1px dashed #4b5563',
+                            background: selected ? '#2f6fed' : 'transparent',
+                            color: selected ? '#fff' : '#9ca3af',
+                            fontWeight: selected ? 600 : 400,
+                          }}
+                        >{selected ? '✓ ' : '+ '}{t.name}</button>
+                      );
+                    })}
+                </div>
+                {!tags.filter((t) => !tagInput.trim() || t.name.toLowerCase().includes(tagInput.trim().toLowerCase())).length && (
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6 }}>
+                    没有匹配的标签——回车上方输入框即可创建新标签「{tagInput.trim()}」
+                  </div>
+                )}
+              </div>
+            )}
+            {/* 自由新建（不在已有标签里的） */}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input
-                style={{ ...inputStyle, width: 160, padding: '5px 8px', fontSize: 12 }}
+                style={{ ...inputStyle, width: 200, padding: '5px 8px', fontSize: 12 }}
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTagToForm(tagInput); } }}
-                placeholder="输入标签名回车添加"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const t = tagInput.trim();
+                    if (t && !form.tags.includes(t)) {
+                      addTagToForm(t);
+                      // 同时入标签库，方便下次复用
+                      platformApi.createMallTag(appId, t).catch(() => {}).then(() => load());
+                    }
+                  }
+                }}
+                placeholder="没有想要的标签？输入后回车（自动入库）"
               />
-              {tags.filter((t) => !form.tags.includes(t.name)).slice(0, 8).map((t) => (
-                <button
-                  key={t.id} type="button"
-                  onClick={() => addTagToForm(t.name)}
-                  style={{ padding: '4px 10px', borderRadius: 12, border: '1px dashed #4b5563', background: 'transparent', color: '#9ca3af', fontSize: 11, cursor: 'pointer' }}
-                  title="点击快速添加"
-                >+ {t.name}</button>
-              ))}
+              <span style={{ fontSize: 10, color: '#6b7280' }}>新标签会自动存入标签库</span>
             </div>
 
             <label style={labelStyle}>简介</label>
