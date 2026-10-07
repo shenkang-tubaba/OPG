@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Public } from '../../common/decorators/public.decorator';
 import { tenantControllerPaths, resolveAppSlug } from '../../common/utils/controller-paths';
 import { MallResourcesService } from './mall-resources.service';
 
@@ -11,20 +12,22 @@ type AuthRequest = {
 };
 
 /**
- * 用户端商城资源接口（JWT 鉴权）
- * GET  /:app/v1/mall/resources          资源列表（download_url 仅 SVIP 返回）
- * GET  /:app/v1/mall/resources/:id      资源详情
- * GET  /:app/v1/mall/membership         我的会员档位
+ * 用户端商城资源接口（可选鉴权）
+ * 权益模型（2026-10）：资源介绍对所有人开放（含未登录游客），
+ * 登录且持有任意有效会员（VIP/SVIP）才返回 download_url。
+ * GET  /:app/v1/mall/resources          资源列表（未登录游客可看介绍，无链接）
+ * GET  /:app/v1/mall/resources/:id      资源详情（同上）
+ * GET  /:app/v1/mall/membership         我的会员档位（需登录）
  */
 @ApiTags('MallResources')
 @Controller(tenantControllerPaths('mall', true))
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class MallResourcesController {
   constructor(private readonly service: MallResourcesService) {}
 
   @Get('resources')
-  @ApiOperation({ summary: '商城资源列表（按会员档位过滤，SVIP 才返回下载链接）' })
+  @Public()
+  @ApiOperation({ summary: '商城资源列表（游客可看介绍；VIP/SVIP 返回下载链接）' })
   async list(@Req() req: AuthRequest, @Query('category') category?: string) {
     const appSlug = String(resolveAppSlug(req) || '');
     const userId = String(req.user?.id || req.user?.user_id || req.user?.sub || '');
@@ -32,7 +35,8 @@ export class MallResourcesController {
   }
 
   @Get('resources/:id')
-  @ApiOperation({ summary: '商城资源详情（按会员档位过滤）' })
+  @Public()
+  @ApiOperation({ summary: '商城资源详情（游客可看介绍；VIP/SVIP 返回下载链接）' })
   async detail(@Req() req: AuthRequest, @Param('id') id: string) {
     const appSlug = String(resolveAppSlug(req) || '');
     const userId = String(req.user?.id || req.user?.user_id || req.user?.sub || '');
@@ -40,6 +44,7 @@ export class MallResourcesController {
   }
 
   @Get('membership')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: '我的会员档位（NONE/VIP/SVIP）' })
   async membership(@Req() req: AuthRequest) {
     const appSlug = String(resolveAppSlug(req) || '');
