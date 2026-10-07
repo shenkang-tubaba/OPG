@@ -382,7 +382,18 @@ export default function MallResourcesPage() {
             <label style={labelStyle}>封面图（自动压缩后存服务器）</label>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               {form.cover_url && (
-                <img src={form.cover_url} alt="封面预览" style={{ width: 120, height: 68, objectFit: 'cover', borderRadius: 6, border: '1px solid #374151' }} />
+                <img
+                  src={form.cover_url}
+                  alt="封面预览"
+                  style={{ width: 120, height: 68, objectFit: 'cover', borderRadius: 6, border: '1px solid #374151', background: '#10131a' }}
+                  onError={(e) => {
+                    const img = e.target as HTMLImageElement;
+                    img.style.opacity = '0.2';
+                    img.style.outline = '1px dashed #dc2626';
+                    img.title = '封面地址暂时无法加载（部署 v0.3.11 后自动恢复），不影响保存';
+                  }}
+                  onLoad={(e) => { const img = e.target as HTMLImageElement; img.style.opacity = '1'; img.style.outline = 'none'; }}
+                />
               )}
               <input
                 style={{ ...inputStyle, flex: 1, minWidth: 220 }}
