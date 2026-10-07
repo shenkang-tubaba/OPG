@@ -13,7 +13,8 @@ export interface MallResourceRow {
   summary: string;
   content_html: string;
   cover_url: string;
-  required_tier: string; // VIP | SVIP
+  required_tier: string; // VIP=普通资料 | SVIP=高级资料
+  tags: string[]; // 资料标签（股票讲座/基金/量学云讲堂/...）
   download_url: string | null;
   download_pwd: string | null;
   platform: string | null;
@@ -77,6 +78,21 @@ export class MallResourcesService implements OnModuleInit {
         await this.prisma.$executeRawUnsafe(
           `CREATE INDEX IF NOT EXISTS idx_mall_resources_app ON mall_resources(app_id, published, sort_order)`,
         );
+        // 旧表升级：追加 tags 列（text[]，默认空数组）
+        await this.prisma.$executeRawUnsafe(
+          `ALTER TABLE mall_resources ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}'`,
+        );
+        // 标签管理表（增删改，按 app 隔离）
+        await this.prisma.$executeRawUnsafe(`
+          CREATE TABLE IF NOT EXISTS mall_tags (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            app_id uuid NOT NULL,
+            name varchar(64) NOT NULL,
+            sort_order int NOT NULL DEFAULT 0,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE(app_id, name)
+          )
+        `);
         this.schemaReady = true;
       })().catch((e) => {
         this.schemaPromise = null;
@@ -138,6 +154,7 @@ export class MallResourcesService implements OnModuleInit {
       content_html: row.content_html,
       cover_url: row.cover_url,
       required_tier: row.required_tier,
+      tags: row.tags || [],
       platform: row.platform,
       published: row.published,
       sort_order: row.sort_order,
@@ -162,7 +179,7 @@ export class MallResourcesService implements OnModuleInit {
   /**
    * 用户端资源列表：所有人可预览；下载按资料级别控制（普通=VIP+，高级=SVIP）
    */
-  async listForUser(appSlug: string, userId: string, category?: string) {
+  async listForUser(appSlug: string, userId: string, category?: string, tag?: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
     const tier = await this.resolveMemberTier(appId, userId);
@@ -170,9 +187,11 @@ export class MallResourcesService implements OnModuleInit {
     const rows = await (this.prisma.$queryRawUnsafe(
       `SELECT * FROM mall_resources
        WHERE app_id = $1::uuid AND published = true
+         AND ($2::text = '' OR category = $2::text)
+         AND ($3::text = '' OR $3::text = ANY(tags))
        ORDER BY sort_order DESC, created_at DESC
        LIMIT 500`,
-      appId,
+      appId, category || '', tag || '',
     ) as Promise<MallResourceRow[]>);
 
     const items = rows.map((r) => this.serialize(r, tier, this.canDownloadRow(r, tier)));
@@ -220,6 +239,13 @@ export class MallResourcesService implements OnModuleInit {
     if (!title) throw new BadRequestException('title 不能为空');
     const requiredTier = ['VIP', 'SVIP'].includes(String(body.required_tier)) ? String(body.required_tier) : 'VIP';
     const platform = this.detectPlatform(String(body.download_url || ''));
+    // 标签：支持数组或逗号/中文逗号分隔字符串；去重、去空白、截断到 16 个、单标签 ≤32 字
+    const rawTags = Array.isArray(body.tags)
+      ? body.tags.map((t) => String(t))
+      : String(body.tags || '').split(/[,，、\s]+/);
+    const tags = Array.from(new Set(rawTags.map((t) => t.trim()).filter(Boolean)))
+      .slice(0, 16)
+      .map((t) => t.slice(0, 32));
     const payload = {
       title,
       category: String(body.category || 'other').slice(0, 64),
@@ -227,6 +253,7 @@ export class MallResourcesService implements OnModuleInit {
       content_html: String(body.content_html || ''),
       cover_url: String(body.cover_url || ''),
       required_tier: requiredTier,
+      tags,
       download_url: body.download_url ? String(body.download_url) : null,
       download_pwd: body.download_pwd ? String(body.download_pwd).slice(0, 64) : null,
       platform,
@@ -236,14 +263,14 @@ export class MallResourcesService implements OnModuleInit {
       await this.prisma.$executeRawUnsafe(
         `UPDATE mall_resources SET
            title=$1, category=$2, summary=$3, content_html=$4, cover_url=$5,
-           required_tier=$6, download_url=$7, download_pwd=$8, platform=$9,
+           required_tier=$6, download_url=$7, download_pwd=$8, platform=$9, tags=$12::text[],
            link_status=CASE WHEN $7::text IS DISTINCT FROM download_url THEN 'unknown' ELSE link_status END,
            link_fail_count=CASE WHEN $7::text IS DISTINCT FROM download_url THEN 0 ELSE link_fail_count END,
            updated_at=now()
          WHERE id=$10::uuid AND app_id=$11::uuid`,
         payload.title, payload.category, payload.summary, payload.content_html, payload.cover_url,
         payload.required_tier, payload.download_url, payload.download_pwd, payload.platform,
-        resourceId, appId,
+        resourceId, appId, payload.tags,
       );
       return { id: resourceId, ...payload };
     }
@@ -251,15 +278,86 @@ export class MallResourcesService implements OnModuleInit {
     const rows = await (this.prisma.$queryRawUnsafe(
       `INSERT INTO mall_resources (
          id, app_id, title, category, summary, content_html, cover_url,
-         required_tier, download_url, download_pwd, platform, sort_order, published
+         required_tier, download_url, download_pwd, platform, tags, sort_order, published
        ) VALUES (
-         gen_random_uuid(), $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+         gen_random_uuid(), $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13
        ) RETURNING id`,
       appId, payload.title, payload.category, payload.summary, payload.content_html, payload.cover_url,
-      payload.required_tier, payload.download_url, payload.download_pwd, payload.platform,
+      payload.required_tier, payload.download_url, payload.download_pwd, payload.platform, payload.tags,
       Number(body.sort_order) || 0, body.published === undefined ? true : !!body.published,
     ) as Promise<Array<{ id: string }>>);
     return { id: rows[0].id, ...payload };
+  }
+
+  // ===== 标签管理（mall_tags CRUD） =====
+
+  /** 标签列表（含每个标签被引用的次数） */
+  async adminListTags(appId: string) {
+    await this.ensureSchema();
+    const rows = await (this.prisma.$queryRawUnsafe(
+      `SELECT t.id, t.name, t.sort_order,
+              (SELECT COUNT(*) FROM mall_resources r WHERE r.app_id = t.app_id AND t.name = ANY(r.tags)) AS usage_count
+       FROM mall_tags t WHERE t.app_id = $1::uuid
+       ORDER BY t.sort_order DESC, t.created_at ASC`,
+      appId,
+    ) as Promise<Array<{ id: string; name: string; sort_order: number; usage_count: number }>>);
+    return { total: rows.length, items: rows };
+  }
+
+  async adminCreateTag(appId: string, body: Record<string, unknown>) {
+    await this.ensureSchema();
+    const name = String(body.name || '').trim().slice(0, 64);
+    if (!name) throw new BadRequestException('标签名不能为空');
+    const rows = await (this.prisma.$queryRawUnsafe(
+      `INSERT INTO mall_tags (app_id, name, sort_order) VALUES ($1::uuid, $2, $3)
+       ON CONFLICT (app_id, name) DO UPDATE SET sort_order = EXCLUDED.sort_order
+       RETURNING id, name, sort_order`,
+      appId, name, Number(body.sort_order) || 0,
+    ) as Promise<Array<{ id: string; name: string; sort_order: number }>>);
+    return rows[0];
+  }
+
+  async adminUpdateTag(appId: string, tagId: string, body: Record<string, unknown>) {
+    await this.ensureSchema();
+    const name = String(body.name || '').trim().slice(0, 64);
+    if (!name) throw new BadRequestException('标签名不能为空');
+    // 同步更新资源行内嵌的 tags 数组（改名联动）
+    const old = await (this.prisma.$queryRawUnsafe(
+      `SELECT name FROM mall_tags WHERE id = $1::uuid AND app_id = $2::uuid LIMIT 1`,
+      tagId, appId,
+    ) as Promise<Array<{ name: string }>>);
+    const oldName = old[0]?.name;
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE mall_tags SET name = $3, sort_order = COALESCE($4::int, sort_order) WHERE id = $1::uuid AND app_id = $2::uuid`,
+      tagId, appId, name, Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : null,
+    );
+    if (oldName && oldName !== name) {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE mall_resources SET tags = array_replace(tags, $3, $4), updated_at = now() WHERE app_id = $1::uuid AND $3 = ANY(tags)`,
+        appId, appId, oldName, name,
+      );
+    }
+    return { id: tagId, name };
+  }
+
+  async adminDeleteTag(appId: string, tagId: string) {
+    await this.ensureSchema();
+    const old = await (this.prisma.$queryRawUnsafe(
+      `SELECT name FROM mall_tags WHERE id = $1::uuid AND app_id = $2::uuid LIMIT 1`,
+      tagId, appId,
+    ) as Promise<Array<{ name: string }>>);
+    await this.prisma.$executeRawUnsafe(
+      `DELETE FROM mall_tags WHERE id = $1::uuid AND app_id = $2::uuid`,
+      tagId, appId,
+    );
+    const oldName = old[0]?.name;
+    if (oldName) {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE mall_resources SET tags = array_remove(tags, $3), updated_at = now() WHERE app_id = $1::uuid AND $3 = ANY(tags)`,
+        appId, appId, oldName,
+      );
+    }
+    return { deleted: true };
   }
 
   async adminDelete(appId: string, resourceId: string) {
