@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   platformApi,
@@ -6,6 +6,7 @@ import {
   type MallResourcePayload,
 } from '@/lib/api';
 import { pickApiErrorMessage } from '@/lib/api-response';
+import { compressImage, formatBytes } from '@/lib/image-compress';
 
 const CATEGORIES = [
   { key: 'ebook', label: '电子书' },
@@ -60,6 +61,10 @@ export default function MallResourcesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [inlineUploading, setInlineUploading] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const inlineInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     if (!appId) return;
@@ -161,6 +166,47 @@ export default function MallResourcesPage() {
 
   const catLabel = (key: string) => CATEGORIES.find((c) => c.key === key)?.label || key;
 
+  // 封面：canvas 压缩（长边 1600 / JPEG，自动降质到 ~500KB 内）后存服务器
+  const uploadCover = async (file: File) => {
+    setCoverUploading(true);
+    setMessage(null);
+    try {
+      const { file: compressed, originalSize, compressedSize } = await compressImage(file, 1600, 0.82);
+      const uploaded = await platformApi.uploadImageBuffer(compressed, 'xunlong', appId, 'mall/covers');
+      setForm((prev) => ({ ...prev, cover_url: uploaded.file_url || '' }));
+      setMessage({ type: 'success', text: `封面上传成功（${formatBytes(originalSize)} → ${formatBytes(compressedSize)}）` });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: pickApiErrorMessage(error, '封面上传失败') });
+    } finally {
+      setCoverUploading(false);
+      if (coverInputRef.current) coverInputRef.current.value = '';
+    }
+  };
+
+  // 图文插图：压缩后上传到服务器，并在光标处插入 <img>（也可直接粘图床外链）
+  const uploadInlineImage = async (file: File) => {
+    setInlineUploading(true);
+    setMessage(null);
+    try {
+      const { file: compressed, originalSize, compressedSize } = await compressImage(file, 1200, 0.8);
+      const uploaded = await platformApi.uploadImageBuffer(compressed, 'xunlong', appId, 'mall/content');
+      const url = uploaded.file_url || '';
+      const imgTag = `<img src="${url}" style="max-width:100%;border-radius:8px" />`;
+      setForm((prev) => {
+        const el = document.getElementById('mall-content-html') as HTMLTextAreaElement | null;
+        const pos = el ? el.selectionStart : prev.content_html.length;
+        const next = prev.content_html.slice(0, pos) + '\n' + imgTag + '\n' + prev.content_html.slice(pos);
+        return { ...prev, content_html: next };
+      });
+      setMessage({ type: 'success', text: `插图已插入（${formatBytes(originalSize)} → ${formatBytes(compressedSize)}）` });
+    } catch (error: any) {
+      setMessage({ type: 'error', text: pickApiErrorMessage(error, '插图上传失败') });
+    } finally {
+      setInlineUploading(false);
+      if (inlineInputRef.current) inlineInputRef.current.value = '';
+    }
+  };
+
   return (
     <div style={{ padding: 20, color: '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -254,12 +300,61 @@ export default function MallResourcesPage() {
             <label style={labelStyle}>简介</label>
             <input style={inputStyle} value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} placeholder="列表页展示的一句话简介" />
 
-            <label style={labelStyle}>图文介绍（支持 HTML）</label>
+            <label style={labelStyle}>封面图（自动压缩后存服务器）</label>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              {form.cover_url && (
+                <img src={form.cover_url} alt="封面预览" style={{ width: 120, height: 68, objectFit: 'cover', borderRadius: 6, border: '1px solid #374151' }} />
+              )}
+              <input
+                style={{ ...inputStyle, flex: 1, minWidth: 220 }}
+                value={form.cover_url}
+                onChange={(e) => setForm({ ...form, cover_url: e.target.value })}
+                placeholder="上传或粘贴封面图地址"
+              />
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCover(f); }}
+              />
+              <button
+                type="button"
+                onClick={() => coverInputRef.current?.click()}
+                disabled={coverUploading}
+                style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#e5e7eb', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                {coverUploading ? '压缩上传中...' : '上传封面'}
+              </button>
+            </div>
+
+            <label style={labelStyle}>图文介绍（支持 HTML；插图走图床外链或上传，推荐外链节省服务器）</label>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+              <input
+                ref={inlineInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadInlineImage(f); }}
+              />
+              <button
+                type="button"
+                onClick={() => inlineInputRef.current?.click()}
+                disabled={inlineUploading}
+                style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#93c5fd', cursor: 'pointer', fontSize: 12 }}
+              >
+                {inlineUploading ? '压缩上传中...' : '📷 插入图片（压缩后存服务器）'}
+              </button>
+              <span style={{ fontSize: 11, color: '#6b7280', alignSelf: 'center' }}>
+                插入位置 = 光标处；图床图片直接把 &lt;img src="外链"&gt; 写进下方编辑器即可
+              </span>
+            </div>
             <textarea
+              id="mall-content-html"
               style={{ ...inputStyle, minHeight: 120, fontFamily: 'monospace' }}
               value={form.content_html}
               onChange={(e) => setForm({ ...form, content_html: e.target.value })}
-              placeholder="<p>课程目录、截图等 HTML 内容</p>"
+              placeholder={'<p>课程目录、截图等 HTML 内容</p>\n<img src="https://图床地址/xxx.jpg" style="max-width:100%" />'}
             />
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
