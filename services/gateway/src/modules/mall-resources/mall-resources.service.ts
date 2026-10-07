@@ -309,7 +309,7 @@ export class MallResourcesService implements OnModuleInit {
     await this.ensureSchema();
     const rows = await (this.prisma.$queryRawUnsafe(
       `SELECT t.id, t.name, t.sort_order,
-              (SELECT COUNT(*) FROM mall_resources r WHERE r.app_id = t.app_id AND t.name = ANY(r.tags)) AS usage_count
+              (SELECT COUNT(*) FROM mall_resources r WHERE r.app_id = t.app_id AND t.name = ANY(r.tags))::int AS usage_count
        FROM mall_tags t WHERE t.app_id = $1::uuid
        ORDER BY t.sort_order DESC, t.created_at ASC`,
       appId,
