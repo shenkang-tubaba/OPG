@@ -251,6 +251,18 @@ export default function PlatformLayout({ children }: PlatformLayoutProps) {
     navigate(runtimeContext.loginPath);
   };
 
+  // 全局主题切换（暗色/亮色；main.tsx 启动时已恢复，这里读写同一 localStorage key）
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark') ? 'dark' : 'light',
+  );
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    if (next === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    try { localStorage.setItem('opg-theme', next); } catch { /* ignore */ }
+  };
+
   return (
     <div className={`platform-shell opg-admin ${isTenantWorkspace ? 'tenant-workspace-mode' : ''} ${collapsed ? 'opg-nav-collapsed' : ''}`}>
       {!isTenantWorkspace && <>
@@ -286,6 +298,15 @@ export default function PlatformLayout({ children }: PlatformLayoutProps) {
           </div>
           <div className="platform-header-user">
             <div className="platform-header-user-info"><strong>{userInfo?.display_name || userInfo?.email || '超级管理员'}</strong></div>
+            <button
+              className="theme-toggle"
+              type="button"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+              title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
             <button className="btn btn-secondary btn-sm" type="button" onClick={handleLogout}>退出登录</button>
           </div>
         </header>
