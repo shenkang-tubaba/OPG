@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PRISMA_CLIENT } from '../../config/database.module';
@@ -117,7 +117,7 @@ export class MallResourcesService implements OnModuleInit {
     return 'NONE';
   }
 
-  /** 序列化：按档位决定是否带下载链接 */
+  /** 序列化：canDownload=true（任意会员）返回链接，否则物理剔除 */
   private serialize(row: MallResourceRow, tier: MemberTier, withLink: boolean) {
     const base: Record<string, unknown> = {
       id: row.id,
@@ -140,7 +140,7 @@ export class MallResourcesService implements OnModuleInit {
       base.link_checked_at = row.link_checked_at;
       base.link_fail_count = row.link_fail_count;
     } else {
-      // 未达档位：不带链接字段（物理不返回，防抓包）
+      // 未开通会员：不带链接字段（物理不返回，防抓包）
       base.download_url = null;
       base.download_pwd = null;
       base.link_locked = true;
@@ -149,15 +149,16 @@ export class MallResourcesService implements OnModuleInit {
   }
 
   /**
-   * 用户端资源列表：VIP 可见全部资源介绍；download_url 仅 SVIP 返回；
-   * 未来资源可标 required_tier='SVIP'，VIP 连介绍都不可见
+   * 用户端资源列表（2026-10 权益模型：所有人可看介绍，VIP/SVIP 会员可下载）
+   * - 未登录/未开通会员：全部资源介绍可见，download_url 不返回（link_locked=true）
+   * - VIP 或 SVIP：返回全部资源的 download_url / download_pwd / link_status
+   * - required_tier 字段保留为展示标签，不再参与可见性过滤
    */
   async listForUser(appSlug: string, userId: string, category?: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
     const tier = await this.resolveMemberTier(appId, userId);
-    const tierRank: Record<string, number> = { NONE: 0, VIP: 1, SVIP: 2 };
-    const canDownload = tierRank[tier] >= 2; // SVIP 才给链接
+    const canDownload = tier !== 'NONE';
 
     const rows = await (this.prisma.$queryRawUnsafe(
       `SELECT * FROM mall_resources
@@ -167,16 +168,12 @@ export class MallResourcesService implements OnModuleInit {
       appId,
     ) as Promise<MallResourceRow[]>);
 
-    const tierOrder = ['NONE', 'VIP', 'SVIP'];
-    const userRank = tierOrder.indexOf(tier);
-    const items = rows
-      .filter((r) => tierOrder.indexOf(r.required_tier) <= userRank) // 档位不足的资源整体隐藏
-      .map((r) => this.serialize(r, tier, canDownload));
+    const items = rows.map((r) => this.serialize(r, tier, canDownload));
 
     return { tier, can_download: canDownload, total: items.length, items };
   }
 
-  /** 获取单资源（用户端，按档位过滤） */
+  /** 获取单资源（用户端）：介绍所有人可见，会员给链接 */
   async getForUser(appSlug: string, userId: string, resourceId: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
@@ -188,11 +185,7 @@ export class MallResourcesService implements OnModuleInit {
     ) as Promise<MallResourceRow[]>);
     const row = rows[0];
     if (!row) throw new NotFoundException('资源不存在');
-    const tierOrder = ['NONE', 'VIP', 'SVIP'];
-    if (tierOrder.indexOf(row.required_tier) > tierOrder.indexOf(tier)) {
-      throw new ForbiddenException('会员档位不足');
-    }
-    const canDownload = tier === 'SVIP';
+    const canDownload = tier !== 'NONE';
     return this.serialize(row, tier, canDownload);
   }
 
