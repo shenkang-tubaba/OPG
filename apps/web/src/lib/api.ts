@@ -2842,7 +2842,7 @@ export interface PlatformAppAiPointsGrantResult {
   created_at: string;
 }
 
-export type PlatformRedeemGrantScope = 'app_membership' | 'ai_membership';
+export type PlatformRedeemGrantScope = 'app_membership' | 'ai_membership' | 'vip_membership' | 'svip_membership';
 
 // ===== 商城资源库 =====
 export interface MallResourceItem {
