@@ -223,6 +223,8 @@ const isVoiceCloneApiType = (apiType?: string | null) => {
 const MEMBERSHIP_SCOPE_LABELS: Record<PlatformRedeemGrantScope, string> = {
   app_membership: '应用会员',
   ai_membership: 'AI 会员',
+  vip_membership: 'VIP 会员',
+  svip_membership: 'SVIP 会员',
 };
 
 const buildMembershipGrant = (
@@ -234,6 +236,12 @@ const buildMembershipGrant = (
 });
 
 const resolvePrimaryMembershipScope = (grants: PlatformRedeemGrantInput[]): PlatformRedeemGrantScope => {
+  if (grants.some((grant) => grant.scope === 'svip_membership')) {
+    return 'svip_membership';
+  }
+  if (grants.some((grant) => grant.scope === 'vip_membership') && !grants.some((grant) => grant.scope === 'app_membership')) {
+    return 'vip_membership';
+  }
   if (grants.some((grant) => grant.scope === 'ai_membership') && !grants.some((grant) => grant.scope === 'app_membership')) {
     return 'ai_membership';
   }
@@ -242,7 +250,7 @@ const resolvePrimaryMembershipScope = (grants: PlatformRedeemGrantInput[]): Plat
 
 const resolveMembershipGrantDays = (grants: PlatformRedeemGrantInput[]) => {
   const days = grants
-    .filter((grant) => grant.scope === 'app_membership' || grant.scope === 'ai_membership')
+    .filter((grant) => grant.scope === 'app_membership' || grant.scope === 'ai_membership' || grant.scope === 'vip_membership' || grant.scope === 'svip_membership')
     .map((grant) => Number(grant.days || 0))
     .filter((value) => Number.isFinite(value) && value > 0);
   return days.length ? Math.max(...days) : 30;
@@ -251,7 +259,7 @@ const resolveMembershipGrantDays = (grants: PlatformRedeemGrantInput[]) => {
 const formatMembershipScopeLabel = (grants: PlatformRedeemGrantInput[]) => {
   const scopes = grants
     .map((grant) => grant.scope)
-    .filter((scope): scope is PlatformRedeemGrantScope => scope === 'app_membership' || scope === 'ai_membership');
+    .filter((scope): scope is PlatformRedeemGrantScope => scope !== 'app_membership' || true);
   if (!scopes.length) {
     return '-';
   }
@@ -2501,7 +2509,12 @@ export default function TenantWorkspace({ appIdOverride }: TenantWorkspaceProps)
             ? (packageForm.execute_time.trim() || null)
             : null,
         },
-        grants: [buildMembershipGrant(packageForm.membership_scope, packageForm.membership_days)],
+        grants: packageForm.membership_scope === 'svip_membership'
+          ? [
+              buildMembershipGrant('svip_membership', packageForm.membership_days),
+              buildMembershipGrant('vip_membership', packageForm.membership_days),
+            ]
+          : [buildMembershipGrant(packageForm.membership_scope, packageForm.membership_days)],
       };
 
       if (!payload.name) {
@@ -2765,7 +2778,12 @@ export default function TenantWorkspace({ appIdOverride }: TenantWorkspaceProps)
         package_id: batchForm.use_package ? batchForm.package_id || undefined : undefined,
         grants: batchForm.use_package
           ? undefined
-          : [buildMembershipGrant(batchForm.custom_membership_scope, batchForm.custom_membership_days)],
+          : batchForm.custom_membership_scope === 'svip_membership'
+            ? [
+                buildMembershipGrant('svip_membership', batchForm.custom_membership_days),
+                buildMembershipGrant('vip_membership', batchForm.custom_membership_days),
+              ]
+            : [buildMembershipGrant(batchForm.custom_membership_scope, batchForm.custom_membership_days)],
       };
       const result = await platformApi.createRedeemCodeBatch(appId, payload);
       setLastGeneratedCodes(result.codes || []);
@@ -5145,6 +5163,8 @@ const agents = await opg.agents.list();`}</pre>
           >
             <option value="app_membership">{MEMBERSHIP_SCOPE_LABELS.app_membership}</option>
             <option value="ai_membership">{MEMBERSHIP_SCOPE_LABELS.ai_membership}</option>
+            <option value="vip_membership">{MEMBERSHIP_SCOPE_LABELS.vip_membership}</option>
+            <option value="svip_membership">{MEMBERSHIP_SCOPE_LABELS.svip_membership}（自动赠送 VIP）</option>
           </select>
         </div>
         <div className="form-group">
@@ -5377,6 +5397,8 @@ const agents = await opg.agents.list();`}</pre>
               >
                 <option value="app_membership">{MEMBERSHIP_SCOPE_LABELS.app_membership}</option>
                 <option value="ai_membership">{MEMBERSHIP_SCOPE_LABELS.ai_membership}</option>
+                <option value="vip_membership">{MEMBERSHIP_SCOPE_LABELS.vip_membership}</option>
+                <option value="svip_membership">{MEMBERSHIP_SCOPE_LABELS.svip_membership}（自动赠送 VIP）</option>
               </select>
             </div>
             <div className="form-group">
