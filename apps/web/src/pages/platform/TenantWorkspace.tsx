@@ -51,6 +51,7 @@ import {
   platformApi,
 } from '@/lib/api';
 import { pickApiData, pickApiErrorMessage } from '@/lib/api-response';
+import { compressImage, formatBytes } from '@/lib/image-compress';
 import { runtimeContext } from '@/lib/runtime-context';
 import AppAiUsagePanel from '@/pages/platform/components/AppAiUsagePanel';
 import MallResourcesPage from '@/pages/platform/MallResourcesPage';
@@ -2752,9 +2753,14 @@ export default function TenantWorkspace({ appIdOverride }: TenantWorkspaceProps)
     setPackageCoverUploading(true);
     setMessage(null);
     try {
-      const uploaded = await platformApi.uploadImageBuffer(file, appDetail?.slug, appId, 'uploads/images');
+      // 客户端 canvas 压缩（长边 1600 / JPEG ~0.82），显著减小服务器存储与带宽
+      const { file: compressed, originalSize, compressedSize } = await compressImage(file, 1600, 0.82);
+      const uploaded = await platformApi.uploadImageBuffer(compressed, appDetail?.slug, appId, 'uploads/images');
       setPackageForm((prev) => ({ ...prev, cover_url: uploaded.file_url || '' }));
-      setMessage({ type: 'success', text: '产品封面上传成功' });
+      setMessage({
+        type: 'success',
+        text: `封面上传成功（已压缩 ${formatBytes(originalSize)} → ${formatBytes(compressedSize)}）`,
+      });
     } catch (error: any) {
       setMessage({ type: 'error', text: pickApiErrorMessage(error, '产品封面上传失败') });
     } finally {
