@@ -78,6 +78,7 @@ export default function MallResourcesPage() {
   const [imgDialogUrl, setImgDialogUrl] = useState('');
   const [imgDialogMsg, setImgDialogMsg] = useState<string | null>(null);
   const [panHint, setPanHint] = useState<{ label: string; pwd?: string | null } | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!appId) return;
@@ -430,6 +431,15 @@ export default function MallResourcesPage() {
               >
                 🌐 插入图床图片
               </button>
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(true)}
+                disabled={!form.content_html.trim()}
+                title={form.content_html.trim() ? '按 App 端样式预览' : '先填写图文内容'}
+                style={{ padding: '5px 12px', borderRadius: 6, border: '1px solid #4b5563', background: '#1f2937', color: '#e8b34b', cursor: form.content_html.trim() ? 'pointer' : 'not-allowed', fontSize: 12, opacity: form.content_html.trim() ? 1 : 0.5 }}
+              >
+                👁 预览
+              </button>
               <span style={{ fontSize: 11, color: '#6b7280', alignSelf: 'center' }}>
                 插入位置 = 光标处；链接自动规范化，不怕贴错格式
               </span>
@@ -515,6 +525,56 @@ export default function MallResourcesPage() {
                 </div>
               </div>
             )}
+
+            {/* App 端样式预览弹窗 */}
+            {previewOpen && (
+              <div style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,.75)', zIndex: 210,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+              }} onClick={(e) => { if (e.target === e.currentTarget) setPreviewOpen(false); }}>
+                <div style={{ width: 380, maxWidth: '100%', maxHeight: '86vh', overflowY: 'auto', background: '#171a21', borderRadius: 18, padding: 16, border: '1px solid #2c313c' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#e8eaf0' }}>📱 App 端预览</span>
+                    <button onClick={() => setPreviewOpen(false)} style={{ background: 'none', border: 'none', color: '#9aa0ae', fontSize: 16, cursor: 'pointer' }}>✕</button>
+                  </div>
+                  {/* 封面 */}
+                  {form.cover_url && (
+                    <img src={form.cover_url} alt="封面" style={{ width: '100%', height: 170, objectFit: 'cover', borderRadius: 12, marginBottom: 12, display: 'block', background: '#10131a' }} onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.25'; }} />
+                  )}
+                  {/* 标题/分类/简介 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: '#f3f4f6', flex: 1, minWidth: 0, overflowWrap: 'break-word' }}>{form.title || '（未填标题）'}</span>
+                    <span style={{ fontSize: 10, color: '#9aa0ae', background: '#1c1f26', padding: '2px 8px', borderRadius: 8 }}>{CATEGORIES.find(c => c.key === form.category)?.label || form.category}</span>
+                    {form.required_tier === 'SVIP' && <span style={{ fontSize: 10, fontWeight: 700, color: '#e8b34b', background: 'rgba(232,179,75,.12)', padding: '2px 8px', borderRadius: 8 }}>SVIP</span>}
+                  </div>
+                  {form.summary && <div style={{ fontSize: 12, color: '#9aa0ae', marginBottom: 10, lineHeight: 1.6 }}>{form.summary}</div>}
+                  {/* 图文：模拟 App 深色卡片渲染 */}
+                  <div
+                    style={{
+                      background: '#10131a', border: '1px solid #23272f', borderRadius: 10,
+                      padding: 12, fontSize: 13, lineHeight: 1.7, color: '#c8ccd4', overflowWrap: 'break-word',
+                    }}
+                    className="mall-content-preview"
+                    dangerouslySetInnerHTML={{ __html: APP_PREVIEW_CSS + (form.content_html || '<span style="color:#6b7280">（无图文内容）</span>') }}
+                  />
+                  {/* 下载区 */}
+                  <div style={{ background: '#10131a', border: '1px solid #23272f', borderRadius: 10, padding: 12, marginTop: 10 }}>
+                    {form.download_url ? (
+                      <>
+                        {form.download_pwd && <div style={{ fontSize: 12, color: '#9aa0ae', marginBottom: 8 }}>提取码：<b style={{ color: '#e8eaf0' }}>{form.download_pwd}</b></div>}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <span style={{ flex: 1, textAlign: 'center', padding: '8px 0', borderRadius: 8, background: '#e8b34b', color: '#171a21', fontSize: 12, fontWeight: 700 }}>复制链接</span>
+                          <span style={{ flex: 1, textAlign: 'center', padding: '8px 0', borderRadius: 8, background: 'rgba(232,179,75,.15)', color: '#e8b34b', fontSize: 12, fontWeight: 700 }}>打开网盘</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 12, color: '#6b7280', textAlign: 'center' }}>🔒 会员专享下载链接，开通会员解锁（未填链接时 App 端显示此文案）</div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#4b5563', textAlign: 'center', marginTop: 10 }}>预览仅供排版参考，实际以 App 渲染为准</div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -525,6 +585,19 @@ export default function MallResourcesPage() {
 const labelStyle: React.CSSProperties = {
   display: 'block', fontSize: 12, color: '#9ca3af', margin: '12px 0 4px',
 };
+
+/** 注入预览容器的样式：让 h1-h4/p/ul/img 等按 App 深色风格渲染（dangerouslySetInnerHTML 不吃 scoped CSS） */
+const APP_PREVIEW_CSS = `<style>
+.mall-content-preview h1,.mall-content-preview h2,.mall-content-preview h3,.mall-content-preview h4{color:#e8eaf0;margin:10px 0 6px;font-size:14px}
+.mall-content-preview p{margin:6px 0}
+.mall-content-preview ul,.mall-content-preview ol{margin:6px 0;padding-left:20px}
+.mall-content-preview li{margin:3px 0}
+.mall-content-preview img{max-width:100%;height:auto;border-radius:8px;margin:8px 0;display:block}
+.mall-content-preview a{color:#93c5fd}
+.mall-content-preview table{border-collapse:collapse;width:100%}
+.mall-content-preview td,.mall-content-preview th{border:1px solid #2c313c;padding:4px 8px;font-size:12px}
+.mall-content-preview strong{color:#e8eaf0}
+</style>`;
 const inputStyle: React.CSSProperties = {
   width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 6,
   border: '1px solid #374151', background: '#0b0f19', color: '#e5e7eb', fontSize: 13,
