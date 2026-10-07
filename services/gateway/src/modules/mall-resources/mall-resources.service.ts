@@ -21,6 +21,7 @@ export interface MallResourceRow {
   link_status: string; // unknown | ok | suspect | invalid
   link_checked_at: Date | null;
   link_fail_count: number;
+  download_count: number;
   sort_order: number;
   published: boolean;
   created_at: Date;
@@ -81,6 +82,10 @@ export class MallResourcesService implements OnModuleInit {
         // 旧表升级：追加 tags 列（text[]，默认空数组）
         await this.prisma.$executeRawUnsafe(
           `ALTER TABLE mall_resources ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}'`,
+        );
+        // 下载量统计列（用户点"复制链接/打开网盘"时 +1）
+        await this.prisma.$executeRawUnsafe(
+          `ALTER TABLE mall_resources ADD COLUMN IF NOT EXISTS download_count int NOT NULL DEFAULT 0`,
         );
         // 标签管理表（增删改，按 app 隔离）
         await this.prisma.$executeRawUnsafe(`
@@ -173,25 +178,33 @@ export class MallResourcesService implements OnModuleInit {
       base.download_pwd = null;
       base.link_locked = true;
     }
+    base.download_count = row.download_count || 0; // 排名展示用，所有身份可见
     return base;
   }
 
   /**
    * 用户端资源列表：所有人可预览；下载按资料级别控制（普通=VIP+，高级=SVIP）
    */
-  async listForUser(appSlug: string, userId: string, category?: string, tag?: string) {
+  async listForUser(appSlug: string, userId: string, category?: string, tag?: string, keyword?: string, sort?: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
     const tier = await this.resolveMemberTier(appId, userId);
+
+    // 排序白名单：download_count=下载量（默认）、time=最新、title=名称
+    const orderSql =
+      sort === 'time' ? 'created_at DESC' :
+      sort === 'title' ? `title COLLATE "zh-CN" ASC` :
+      'download_count DESC, sort_order DESC, created_at DESC';
 
     const rows = await (this.prisma.$queryRawUnsafe(
       `SELECT * FROM mall_resources
        WHERE app_id = $1::uuid AND published = true
          AND ($2::text = '' OR category = $2::text)
          AND ($3::text = '' OR $3::text = ANY(tags))
-       ORDER BY sort_order DESC, created_at DESC
+         AND ($4::text = '' OR title ILIKE '%' || $4::text || '%' OR summary ILIKE '%' || $4::text || '%')
+       ORDER BY ${orderSql}
        LIMIT 500`,
-      appId, category || '', tag || '',
+      appId, category || '', tag || '', keyword || '',
     ) as Promise<MallResourceRow[]>);
 
     const items = rows.map((r) => this.serialize(r, tier, this.canDownloadRow(r, tier)));
@@ -377,6 +390,20 @@ export class MallResourcesService implements OnModuleInit {
        WHERE id=$3::uuid`,
       status, failCount, resourceId,
     );
+  }
+
+  /** 下载量 +1（用户点复制/打开时上报；游客也可） */
+  async trackDownload(appSlug: string, resourceId: string) {
+    await this.ensureSchema();
+    const appId = await this.resolveAppId(appSlug);
+    const rows = await (this.prisma.$queryRawUnsafe(
+      `UPDATE mall_resources SET download_count = download_count + 1, updated_at = now()
+       WHERE id = $1::uuid AND app_id = $2::uuid
+       RETURNING download_count`,
+      resourceId, appId,
+    ) as Promise<Array<{ download_count: number }>>);
+    if (!rows[0]) throw new NotFoundException('资源不存在');
+    return { download_count: rows[0].download_count };
   }
 
   /** 全部待巡检资源 */
