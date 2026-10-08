@@ -188,7 +188,9 @@ export class MallResourcesService implements OnModuleInit {
   async listForUser(appSlug: string, userId: string, category?: string, tag?: string, keyword?: string, sort?: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
-    const tier = await this.resolveMemberTier(appId, userId);
+    // 游客（无有效 userId）直接 NONE 档，避免空串/非法 uuid 传入 SQL 转换炸 500
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const tier = userId && uuidRe.test(userId) ? await this.resolveMemberTier(appId, userId) : 'NONE';
 
     // 排序白名单：download_count=下载量（默认）、time=最新、title=名称
     const orderSql =
@@ -217,7 +219,8 @@ export class MallResourcesService implements OnModuleInit {
   async getForUser(appSlug: string, userId: string, resourceId: string) {
     await this.ensureSchema();
     const appId = await this.resolveAppId(appSlug);
-    const tier = await this.resolveMemberTier(appId, userId);
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const tier = userId && uuidRe.test(userId) ? await this.resolveMemberTier(appId, userId) : 'NONE';
     const rows = await (this.prisma.$queryRawUnsafe(
       `SELECT * FROM mall_resources WHERE id = $1::uuid AND app_id = $2::uuid AND published = true LIMIT 1`,
       resourceId,
